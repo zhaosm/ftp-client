@@ -52,6 +52,7 @@ def main():
         cmd_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP)
         cmd_socket.connect((default_server_host, default_server_port))
         print("Command socket %s." % (str(cmd_socket.getsockname())))
+        print("Waiting for the server to send greeting message...")
         greeting = recv_single_msg(cmd_socket)  # cmd_socket.recv(MAX_MSG_LENGTH)
         assert greeting.startswith("220 ") and greeting.endswith('\r\n'), "Wrong message from server."
         greeting = greeting[:len(greeting) - 2]
