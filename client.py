@@ -1,9 +1,36 @@
 import socket
+import re
 
 default_server_host = "127.0.0.1"
 default_server_port = 21
 verbs = ["USER", "PASS", "PORT", "PASV", "RETR", "STOR", "QUIT", "TYPE", "LIST", "CWD", "MKD", "RMD", "SYST"]
 MAX_MSG_LENGTH = 9000
+my_buffer = ""
+
+
+def recv_single_msg(sock):
+    global my_buffer
+    result = my_buffer
+    while True:
+        search_result = re.search(r"[1-9][0-9]+\s(.*)\r\n", result)
+        if search_result:
+            end = search_result.end()
+            if end < len(result):
+                my_buffer = result[end:]
+            else:
+                my_buffer = ""
+            return result[:end]
+        result += sock.recv(MAX_MSG_LENGTH)
+
+
+# def my_sendall(conn, data):
+#     n = 0
+#     # debug
+#     print(len(data))
+#     while True:
+#         n += conn.send(data[n:])
+#         if n == len(data):
+#             break
 
 
 def parse_cmd(cmd):
@@ -14,8 +41,9 @@ def parse_cmd(cmd):
     else:
         verb = cmd_splitted[0]
         parameter = ''.join(cmd_splitted[1:])
-        if verb not in verbs:
-            raise Exception("Invalid command format: %s" % (cmd))
+        assert verb in verbs, ("Invalid command format: %s." % (cmd))
+        # if verb not in verbs:
+        #     raise Exception("Invalid command format: %s" % (cmd))
     return verb, parameter
 
 
@@ -24,8 +52,8 @@ def main():
         cmd_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP)
         cmd_socket.connect((default_server_host, default_server_port))
         print("Command socket %s." % (str(cmd_socket.getsockname())))
-        greeting = cmd_socket.recv(MAX_MSG_LENGTH)
-        assert(greeting.startswith("220 ") and greeting.endswith('\r\n'))
+        greeting = recv_single_msg(cmd_socket)  # cmd_socket.recv(MAX_MSG_LENGTH)
+        assert greeting.startswith("220 ") and greeting.endswith('\r\n'), "Wrong message from server."
         greeting = greeting[:len(greeting) - 2]
         print("Receive greeting: %s" % (greeting))
         file_socket = None
@@ -44,8 +72,7 @@ def main():
             for result in results:
                 if result['type'] == "reply":
                     reply = result['content']
-                    if not reply.endswith('\r\n'):
-                        raise Exception("Error reply format.")
+                    assert reply.endswith('\r\n'), "Wrong reply format."
                     reply = reply[:len(reply) - 2]
                     print("Receive: %s" % (reply))
                 else:
@@ -66,21 +93,19 @@ def get_reply(cmd, context):
     try:
         verb, parameter = parse_cmd(cmd)
         if verb == "USER":
-            if context['status'] != 0:
-                raise Exception("USER: Wrong status.")
-            context['cmd_socket'].send("%s %s\r\n" % (verb, parameter))
-            reply = context['cmd_socket'].recv(MAX_MSG_LENGTH)
-            if not (reply.startswith("331 ") and reply.endswith("\r\n")):
-                raise Exception("USER: Error message from server.")
+            assert context['status'] == 0, "USER: Wrong status."
+            context['cmd_socket'].sendall("%s %s\r\n" % (verb, parameter))
+            reply = recv_single_msg(context['cmd_socket'])
+            assert reply.startswith("331 ") and reply.endswith("\r\n"), "USER: Wrong reply from server."
             context['status'] = 1
             return [{"type": "reply", "content": reply}], context
         elif verb == "PASS":
+            assert context['status'] == 1, "PASS: Wrong status."
             if context['status'] != 1:
                 raise Exception("PASS: Wrong status.")
-            context['cmd_socket'].send("%s %s\r\n" % (verb, parameter))
-            reply = context['cmd_socket'].recv(MAX_MSG_LENGTH)
-            if not (reply.startswith("230") and reply.endswith("\r\n")):
-                raise Exception("PASS: Error message from server.")
+            context['cmd_socket'].sendall("%s %s\r\n" % (verb, parameter))
+            reply = recv_single_msg(context['cmd_socket'])  # context['cmd_socket'].recv(MAX_MSG_LENGTH)
+            assert reply.startswith("230") and reply.endswith("\r\n"), "PASS: Error message from server."
             context['status'] = 2
             return [{"type": "reply", "content": reply}], context
         elif context['status'] != 2:
@@ -89,24 +114,24 @@ def get_reply(cmd, context):
             parameter_splitted = parameter.split(',')
             context['fhost'] = '.'.join(parameter_splitted[:4])
             context['fport'] = int(parameter_splitted[4]) * 256 + int(parameter_splitted[5])
-            if context['file_socket'] != None:
+            if context['file_socket']:
                 print("Closed file socket %s" % (str(context['file_socket'].getsockname())))
                 context['file_socket'].close()
                 context['file_socket'] = None
             context['mode'] = 1
-            context['cmd_socket'].send("%s %s\r\n" % (verb, parameter))
-            reply = context['cmd_socket'].recv(MAX_MSG_LENGTH)
+            context['cmd_socket'].sendall("%s %s\r\n" % (verb, parameter))
+            reply = recv_single_msg(context['cmd_socket'])  # context['cmd_socket'].recv(MAX_MSG_LENGTH)
             return [{"type": "reply", "content": reply}], context
         elif verb == "PASV":
             context['cmd_socket'].send("PASV\r\n")
-            reply = context['cmd_socket'].recv(MAX_MSG_LENGTH)
+            reply = recv_single_msg(context['cmd_socket'])  # context['cmd_socket'].recv(MAX_MSG_LENGTH)
             addr_splitted = reply.split(' ')[-1].split(',')
             context['fhost'] = '.'.join(addr_splitted[:4])
             context['fport'] = int(addr_splitted[4]) * 256 + int(addr_splitted[5])
             context['mode'] = 2
             return [{'type': 'reply', 'content': reply}], context
         elif verb == "LIST":
-            assert(context['mode'] == 1 or context['mode'] == 2)
+            assert context['mode'] == 1 or context['mode'] == 2, "LIST: Need to specify PORT or PASV first."
             if context['file_socket']:
                 context['file_socket'].close()
             context['file_socket'] = socket.socket(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP)
@@ -114,11 +139,11 @@ def get_reply(cmd, context):
                 context['file_socket'].bind((context['fhost'], context['fport']))
                 context['file_socket'].listen(1)  # only listen to server
             if parameter == "":
-                context['cmd_socket'].send("LIST\r\n")
+                context['cmd_socket'].sendall("LIST\r\n")
             else:
-                context['cmd_socket'].send("%s %s\r\n" % (verb, parameter))
-            reply1 = context['cmd_socket'].recv(MAX_MSG_LENGTH)
-            assert (reply1.startswith("150 ") and reply1.endswith('\r\n'))
+                context['cmd_socket'].sendall("%s %s\r\n" % (verb, parameter))
+            reply1 = recv_single_msg(context['cmd_socket'])  # context['cmd_socket'].recv(MAX_MSG_LENGTH)
+            assert reply1.startswith("150 ") and reply1.endswith('\r\n'), "LIST: Wrong reply from server."
             if context['mode'] == 1:
                 conn, addr = context['file_socket'].accept()
             else:
@@ -129,23 +154,24 @@ def get_reply(cmd, context):
             data = ""
             while True:
                 new_data = conn.recv(MAX_MSG_LENGTH)
-                assert(len(new_data) >= 0)
+                assert len(new_data) >= 0, "LIST: Error reading from server."
                 if len(new_data) == 0:
                     break
                 data += new_data
-            # reply2 = context['cmd_socket'].recv(MAX_MSG_LENGTH)
+            reply2 = recv_single_msg(context['cmd_socket'])  # context['cmd_socket'].recv(MAX_MSG_LENGTH)
+            assert reply2.startswith("226 ") and reply1.endswith('\r\n'), "LIST: Wrong reply from server."
             context['file_socket'].close()
             context['file_socket'] = None
-            return [{"type": "reply", "content": reply1}, {"type": "data", "content": data}], context
+            return [{"type": "reply", "content": reply1}, {"type": "data", "content": data}, {'type': 'reply', 'content': reply2}], context
         elif verb == "RETR":
-            assert (context['mode'] == 1 or context['mode'] == 2)
+            assert context['mode'] == 1 or context['mode'] == 2, "RETR: Need to specify PORT or PASV first."
             context['file_socket'] = socket.socket(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP)
             if context['mode'] == 1:  # PORT
                 context['file_socket'].bind((context['fhost'], context['fport']))
                 context['file_socket'].listen(1)  # only listen to server
-            context['cmd_socket'].send("%s %s\r\n" % (verb, parameter))
-            reply1 = context['cmd_socket'].recv(MAX_MSG_LENGTH)
-            assert (reply1.startswith("150 ") and reply1.endswith('\r\n'))
+            context['cmd_socket'].sendall("%s %s\r\n" % (verb, parameter))
+            reply1 = recv_single_msg(context['cmd_socket'])  # context['cmd_socket'].recv(MAX_MSG_LENGTH)
+            assert reply1.startswith("150 ") and reply1.endswith('\r\n')
             if context['mode'] == 1:
                 conn, addr = context['file_socket'].accept()
             else:
@@ -164,17 +190,19 @@ def get_reply(cmd, context):
                 f.write(data)
             context['file_socket'].close()
             context['file_socket'] = None
-            return [{"type": "reply", "content": reply1}], context
+            reply2 = recv_single_msg(context['cmd_socket'])  # context['cmd_socket'].recv(MAX_MSG_LENGTH)
+            assert reply2.startswith("226 ") and reply1.endswith('\r\n'), "LIST: Wrong reply from server."
+            return [{"type": "reply", "content": reply1}, {'type': 'reply', 'content': reply2}], context
         elif verb == "STOR":  # STOR dest,source
-            assert (context['mode'] == 1 or context['mode'] == 2)
+            assert context['mode'] == 1 or context['mode'] == 2, "STOR: Need to specify PORT or PASV first."
             context['file_socket'] = socket.socket(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP)
             if context['mode'] == 1:  # PORT
                 context['file_socket'].bind((context['fhost'], context['fport']))
                 context['file_socket'].listen(1)  # only listen to server
             fpaths = parameter.split(',')
-            context['cmd_socket'].send("%s %s\r\n" % (verb, fpaths[0]))
-            reply1 = context['cmd_socket'].recv(MAX_MSG_LENGTH)
-            assert (reply1.startswith("150 ") and reply1.endswith('\r\n'))
+            context['cmd_socket'].sendall("%s %s\r\n" % (verb, fpaths[0]))
+            reply1 = recv_single_msg(context['cmd_socket'])  # context['cmd_socket'].recv(MAX_MSG_LENGTH)
+            assert reply1.startswith("150 ") and reply1.endswith('\r\n'), "STOR: Wrong reply from server."
             if context['mode'] == 1:
                 conn, addr = context['file_socket'].accept()
             else:
@@ -185,17 +213,18 @@ def get_reply(cmd, context):
             with open(fpaths[1], "rb") as f:
                 data = f.read()
                 conn.sendall(data)
-            reply2 = context['cmd_socket'].recv(MAX_MSG_LENGTH)
             context['file_socket'].close()
             context['file_socket'] = None
+            reply2 = recv_single_msg(context['cmd_socket'])  # context['cmd_socket'].recv(MAX_MSG_LENGTH)
+            assert reply2.startswith("226 ") and reply1.endswith('\r\n'), "STOR: Wrong reply from server."
             return [{"type": "reply", "content": reply1}, {"type": "reply", "content": reply2}], context
         elif verb == "MKD" or verb == "CWD" or verb == "RMD":
-            context['cmd_socket'].send("%s %s\r\n" % (verb, parameter))
-            reply = context['cmd_socket'].recv(MAX_MSG_LENGTH)
+            context['cmd_socket'].sendall("%s %s\r\n" % (verb, parameter))
+            reply = recv_single_msg(context['cmd_socket'])  # context['cmd_socket'].recv(MAX_MSG_LENGTH)
             return [{'type': 'reply', 'content': reply}], context
         elif verb == "TYPE" or verb == "SYST" or verb == "QUIT":
-            context['cmd_socket'].send("%s\r\n" % (verb))
-            reply = context['cmd_socket'].recv(MAX_MSG_LENGTH)
+            context['cmd_socket'].sendall("%s\r\n" % (verb))
+            reply = recv_single_msg(context['cmd_socket'])  # context['cmd_socket'].recv(MAX_MSG_LENGTH)
             return [{'type': 'reply', 'content': reply}], context
     except Exception as e:
         print(e.message)
