@@ -1,11 +1,16 @@
 import socket
 import re
+from Tkinter import *
+import ttk
+import tkMessageBox
+import tkFileDialog
 
 default_server_host = "127.0.0.1"
 default_server_port = 21
 verbs = ["USER", "PASS", "PORT", "PASV", "RETR", "STOR", "QUIT", "TYPE", "LIST", "CWD", "MKD", "RMD", "SYST"]
 MAX_MSG_LENGTH = 9000
 my_buffer = ""
+default_name_prefix = "/anonymous"
 
 
 def recv_single_msg(sock):
@@ -33,9 +38,9 @@ def recv_single_msg(sock):
 #             break
 
 
-def parse_cmd(cmd):
+def parse_cmd(cmd):  # input command from client without \r\n as end mark
     cmd_splitted = cmd.split(' ')
-    if len(cmd_splitted) == 0:  # no parameters
+    if len(cmd_splitted) == 1:  # no parameters
         verb = cmd_splitted[0]
         parameter = ''
     else:
@@ -69,7 +74,8 @@ def main():
     while True:
         try:
             cmd = raw_input("Enter command: ")
-            results, context = get_reply(cmd, context)
+            verb, parameter = parse_cmd(cmd)
+            results, context = get_reply(verb, parameter, context)
             for result in results:
                 if result['type'] == "reply":
                     reply = result['content']
@@ -84,151 +90,347 @@ def main():
                         data = data[:len(data) - 1]
                     print("Receive data: %s" % (data))
             if cmd == "QUIT":
+                if context['cmd_socket']:
+                    context['cmd_socket'].close()
+                if context['file_socket']:
+                    context['file_socket'].close()
                 break
         except Exception as e:
             print(e.message)
             continue
 
 
-def get_reply(cmd, context):
-    try:
-        verb, parameter = parse_cmd(cmd)
-        if verb == "USER":
-            assert context['status'] == 0, "USER: Wrong status."
-            context['cmd_socket'].sendall("%s %s\r\n" % (verb, parameter))
-            reply = recv_single_msg(context['cmd_socket'])
-            assert reply.startswith("331 ") and reply.endswith("\r\n"), "USER: Wrong reply from server."
-            context['status'] = 1
-            return [{"type": "reply", "content": reply}], context
-        elif verb == "PASS":
-            assert context['status'] == 1, "PASS: Wrong status."
-            if context['status'] != 1:
-                raise Exception("PASS: Wrong status.")
-            context['cmd_socket'].sendall("%s %s\r\n" % (verb, parameter))
-            reply = recv_single_msg(context['cmd_socket'])  # context['cmd_socket'].recv(MAX_MSG_LENGTH)
-            assert reply.startswith("230") and reply.endswith("\r\n"), "PASS: Error message from server."
-            context['status'] = 2
-            return [{"type": "reply", "content": reply}], context
-        elif context['status'] != 2:
-            raise Exception("%s: Wrong status." % (verb))
-        if verb == "PORT":  # open new port
-            parameter_splitted = parameter.split(',')
-            context['fhost'] = '.'.join(parameter_splitted[:4])
-            context['fport'] = int(parameter_splitted[4]) * 256 + int(parameter_splitted[5])
-            if context['file_socket']:
-                print("Closed file socket %s" % (str(context['file_socket'].getsockname())))
-                context['file_socket'].close()
-                context['file_socket'] = None
-            context['mode'] = 1
-            context['cmd_socket'].sendall("%s %s\r\n" % (verb, parameter))
-            reply = recv_single_msg(context['cmd_socket'])  # context['cmd_socket'].recv(MAX_MSG_LENGTH)
-            return [{"type": "reply", "content": reply}], context
-        elif verb == "PASV":
-            context['cmd_socket'].send("PASV\r\n")
-            reply = recv_single_msg(context['cmd_socket'])  # context['cmd_socket'].recv(MAX_MSG_LENGTH)
-            addr_splitted = reply.split(' ')[-1].split(',')
-            context['fhost'] = '.'.join(addr_splitted[:4])
-            context['fport'] = int(addr_splitted[4]) * 256 + int(addr_splitted[5])
-            context['mode'] = 2
-            return [{'type': 'reply', 'content': reply}], context
-        elif verb == "LIST":
-            assert context['mode'] == 1 or context['mode'] == 2, "LIST: Need to specify PORT or PASV first."
-            if context['file_socket']:
-                context['file_socket'].close()
-            context['file_socket'] = socket.socket(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP)
-            if context['mode'] == 1:  # PORT
-                context['file_socket'].bind((context['fhost'], context['fport']))
-                context['file_socket'].listen(1)  # only listen to server
-            if parameter == "":
-                context['cmd_socket'].sendall("LIST\r\n")
-            else:
-                context['cmd_socket'].sendall("%s %s\r\n" % (verb, parameter))
-            reply1 = recv_single_msg(context['cmd_socket'])  # context['cmd_socket'].recv(MAX_MSG_LENGTH)
-            assert reply1.startswith("150 ") and reply1.endswith('\r\n'), "LIST: Wrong reply from server."
-            if context['mode'] == 1:
-                conn, addr = context['file_socket'].accept()
-            else:
-                context['file_socket'].connect((context['fhost'], context['fport']))
-                conn = context['file_socket']
-                addr = (context['fhost'], context['fport'])
-            print("%s: Connected to %s" % (verb, addr))
-            data = ""
-            while True:
-                new_data = conn.recv(MAX_MSG_LENGTH)
-                assert len(new_data) >= 0, "LIST: Error reading from server."
-                if len(new_data) == 0:
-                    break
-                data += new_data
-            reply2 = recv_single_msg(context['cmd_socket'])  # context['cmd_socket'].recv(MAX_MSG_LENGTH)
-            assert reply2.startswith("226 ") and reply1.endswith('\r\n'), "LIST: Wrong reply from server."
+def get_reply(verb, parameter, context):
+    if verb == "USER":
+        assert context['status'] == 0, "USER: Wrong status."
+        context['cmd_socket'].sendall("%s %s\r\n" % (verb, parameter))
+        reply = recv_single_msg(context['cmd_socket'])
+        assert reply.startswith("331 ") and reply.endswith("\r\n"), "USER: Wrong reply from server."
+        context['status'] = 1
+        return [{"type": "reply", "content": reply}], context
+    elif verb == "PASS":
+        assert context['status'] == 1, "PASS: Wrong status."
+        if context['status'] != 1:
+            raise Exception("PASS: Wrong status.")
+        context['cmd_socket'].sendall("%s %s\r\n" % (verb, parameter))
+        reply = recv_single_msg(context['cmd_socket'])  # context['cmd_socket'].recv(MAX_MSG_LENGTH)
+        assert reply.startswith("230") and reply.endswith("\r\n"), "PASS: Error message from server."
+        context['status'] = 2
+        return [{"type": "reply", "content": reply}], context
+    elif context['status'] != 2:
+        raise Exception("%s: Wrong status." % (verb))
+    if verb == "PORT":  # open new port
+        parameter_splitted = parameter.split(',')
+        context['fhost'] = '.'.join(parameter_splitted[:4])
+        context['fport'] = int(parameter_splitted[4]) * 256 + int(parameter_splitted[5])
+        if context['file_socket']:
+            print("Closed file socket %s" % (str(context['file_socket'].getsockname())))
             context['file_socket'].close()
             context['file_socket'] = None
-            return [{"type": "reply", "content": reply1}, {"type": "data", "content": data}, {'type': 'reply', 'content': reply2}], context
-        elif verb == "RETR":
-            assert context['mode'] == 1 or context['mode'] == 2, "RETR: Need to specify PORT or PASV first."
-            context['file_socket'] = socket.socket(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP)
-            if context['mode'] == 1:  # PORT
-                context['file_socket'].bind((context['fhost'], context['fport']))
-                context['file_socket'].listen(1)  # only listen to server
-            context['cmd_socket'].sendall("%s %s\r\n" % (verb, parameter))
-            reply1 = recv_single_msg(context['cmd_socket'])  # context['cmd_socket'].recv(MAX_MSG_LENGTH)
-            assert reply1.startswith("150 ") and reply1.endswith('\r\n')
-            if context['mode'] == 1:
-                conn, addr = context['file_socket'].accept()
-            else:
-                context['file_socket'].connect((context['fhost'], context['fport']))
-                conn = context['file_socket']
-                addr = (context['fhost'], context['fport'])
-            print("%s: Connected to %s" % (verb, addr))
-            data = ""
-            while True:
-                new_data = conn.recv(MAX_MSG_LENGTH)
-                if len(new_data) == 0:
-                    break
-                data += new_data
-            fname = parameter.split('/')[-1]
-            with open(fname, "wb") as f:
-                f.write(data)
+        context['mode'] = 1
+        context['cmd_socket'].sendall("%s %s\r\n" % (verb, parameter))
+        reply = recv_single_msg(context['cmd_socket'])  # context['cmd_socket'].recv(MAX_MSG_LENGTH)
+        return [{"type": "reply", "content": reply}], context
+    elif verb == "PASV":
+        context['cmd_socket'].send("PASV\r\n")
+        reply = recv_single_msg(context['cmd_socket'])  # context['cmd_socket'].recv(MAX_MSG_LENGTH)
+        addr_splitted = reply.split(' ')[-1].split(',')
+        context['fhost'] = '.'.join(addr_splitted[:4])
+        context['fport'] = int(addr_splitted[4]) * 256 + int(addr_splitted[5])
+        context['mode'] = 2
+        return [{'type': 'reply', 'content': reply}], context
+    elif verb == "LIST":
+        assert context['mode'] == 1 or context['mode'] == 2, "LIST: Need to specify PORT or PASV first."
+        if context['file_socket']:
             context['file_socket'].close()
-            context['file_socket'] = None
-            reply2 = recv_single_msg(context['cmd_socket'])  # context['cmd_socket'].recv(MAX_MSG_LENGTH)
-            assert reply2.startswith("226 ") and reply1.endswith('\r\n'), "LIST: Wrong reply from server."
-            return [{"type": "reply", "content": reply1}, {'type': 'reply', 'content': reply2}], context
-        elif verb == "STOR":  # STOR dest,source
-            assert context['mode'] == 1 or context['mode'] == 2, "STOR: Need to specify PORT or PASV first."
-            context['file_socket'] = socket.socket(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP)
-            if context['mode'] == 1:  # PORT
-                context['file_socket'].bind((context['fhost'], context['fport']))
-                context['file_socket'].listen(1)  # only listen to server
-            fpaths = parameter.split(',')
-            context['cmd_socket'].sendall("%s %s\r\n" % (verb, fpaths[0]))
-            reply1 = recv_single_msg(context['cmd_socket'])  # context['cmd_socket'].recv(MAX_MSG_LENGTH)
-            assert reply1.startswith("150 ") and reply1.endswith('\r\n'), "STOR: Wrong reply from server."
-            if context['mode'] == 1:
-                conn, addr = context['file_socket'].accept()
-            else:
-                context['file_socket'].connect((context['fhost'], context['fport']))
-                conn = context['file_socket']
-                addr = (context['fhost'], context['fport'])
-            print("%s: Connected to %s" % (verb, addr))
-            with open(fpaths[1], "rb") as f:
-                data = f.read()
-                conn.sendall(data)
-            context['file_socket'].close()
-            context['file_socket'] = None
-            reply2 = recv_single_msg(context['cmd_socket'])  # context['cmd_socket'].recv(MAX_MSG_LENGTH)
-            assert reply2.startswith("226 ") and reply1.endswith('\r\n'), "STOR: Wrong reply from server."
-            return [{"type": "reply", "content": reply1}, {"type": "reply", "content": reply2}], context
-        elif verb == "MKD" or verb == "CWD" or verb == "RMD":
+        context['file_socket'] = socket.socket(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP)
+        if context['mode'] == 1:  # PORT
+            context['file_socket'].bind((context['fhost'], context['fport']))
+            context['file_socket'].listen(1)  # only listen to server
+        if parameter == "":
+            context['cmd_socket'].sendall("LIST\r\n")
+        else:
             context['cmd_socket'].sendall("%s %s\r\n" % (verb, parameter))
-            reply = recv_single_msg(context['cmd_socket'])  # context['cmd_socket'].recv(MAX_MSG_LENGTH)
-            return [{'type': 'reply', 'content': reply}], context
-        elif verb == "TYPE" or verb == "SYST" or verb == "QUIT":
-            context['cmd_socket'].sendall("%s\r\n" % (verb))
-            reply = recv_single_msg(context['cmd_socket'])  # context['cmd_socket'].recv(MAX_MSG_LENGTH)
-            return [{'type': 'reply', 'content': reply}], context
-    except Exception as e:
-        print(e.message)
-        return [], context
+        reply1 = recv_single_msg(context['cmd_socket'])  # context['cmd_socket'].recv(MAX_MSG_LENGTH)
+        assert reply1.startswith("150 ") and reply1.endswith('\r\n'), "LIST: Wrong reply from server."
+        if context['mode'] == 1:
+            conn, addr = context['file_socket'].accept()
+        else:
+            context['file_socket'].connect((context['fhost'], context['fport']))
+            conn = context['file_socket']
+            addr = (context['fhost'], context['fport'])
+        print("%s: Connected to %s" % (verb, addr))
+        data = ""
+        while True:
+            new_data = conn.recv(MAX_MSG_LENGTH)
+            assert len(new_data) >= 0, "LIST: Error reading from server."
+            if len(new_data) == 0:
+                break
+            data += new_data
+        reply2 = recv_single_msg(context['cmd_socket'])  # context['cmd_socket'].recv(MAX_MSG_LENGTH)
+        assert reply2.startswith("226 ") and reply1.endswith('\r\n'), "LIST: Wrong reply from server."
+        context['file_socket'].close()
+        context['file_socket'] = None
+        return [{"type": "reply", "content": reply1}, {"type": "data", "content": data}, {'type': 'reply', 'content': reply2}], context
+    elif verb == "RETR":
+        assert context['mode'] == 1 or context['mode'] == 2, "RETR: Need to specify PORT or PASV first."
+        fpaths = parameter.split(',')
+        context['file_socket'] = socket.socket(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP)
+        if context['mode'] == 1:  # PORT
+            context['file_socket'].bind((context['fhost'], context['fport']))
+            context['file_socket'].listen(1)  # only listen to server
+        context['cmd_socket'].sendall("%s %s\r\n" % (verb, fpaths[1]))
+        reply1 = recv_single_msg(context['cmd_socket'])  # context['cmd_socket'].recv(MAX_MSG_LENGTH)
+        assert reply1.startswith("150 ") and reply1.endswith('\r\n')
+        if context['mode'] == 1:
+            conn, addr = context['file_socket'].accept()
+        else:
+            context['file_socket'].connect((context['fhost'], context['fport']))
+            conn = context['file_socket']
+            addr = (context['fhost'], context['fport'])
+        print("%s: Connected to %s" % (verb, addr))
+        data = ""
+        while True:
+            new_data = conn.recv(MAX_MSG_LENGTH)
+            if len(new_data) == 0:
+                break
+            data += new_data
+        with open(fpaths[0], "wb") as f:
+            f.write(data)
+        context['file_socket'].close()
+        context['file_socket'] = None
+        reply2 = recv_single_msg(context['cmd_socket'])  # context['cmd_socket'].recv(MAX_MSG_LENGTH)
+        assert reply2.startswith("226 ") and reply1.endswith('\r\n'), "LIST: Wrong reply from server."
+        return [{"type": "reply", "content": reply1}, {'type': 'reply', 'content': reply2}], context
+    elif verb == "STOR":  # STOR dest,source
+        assert context['mode'] == 1 or context['mode'] == 2, "STOR: Need to specify PORT or PASV first."
+        context['file_socket'] = socket.socket(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP)
+        if context['mode'] == 1:  # PORT
+            context['file_socket'].bind((context['fhost'], context['fport']))
+            context['file_socket'].listen(1)  # only listen to server
+        fpaths = parameter.split(',')
+        context['cmd_socket'].sendall("%s %s\r\n" % (verb, fpaths[0]))
+        reply1 = recv_single_msg(context['cmd_socket'])  # context['cmd_socket'].recv(MAX_MSG_LENGTH)
+        assert reply1.startswith("150 ") and reply1.endswith('\r\n'), "STOR: Wrong reply from server."
+        if context['mode'] == 1:
+            conn, addr = context['file_socket'].accept()
+        else:
+            context['file_socket'].connect((context['fhost'], context['fport']))
+            conn = context['file_socket']
+            addr = (context['fhost'], context['fport'])
+        print("%s: Connected to %s" % (verb, addr))
+        with open(fpaths[1], "rb") as f:
+            data = f.read()
+            conn.sendall(data)
+        context['file_socket'].close()
+        context['file_socket'] = None
+        reply2 = recv_single_msg(context['cmd_socket'])  # context['cmd_socket'].recv(MAX_MSG_LENGTH)
+        assert reply2.startswith("226 ") and reply1.endswith('\r\n'), "STOR: Wrong reply from server."
+        return [{"type": "reply", "content": reply1}, {"type": "reply", "content": reply2}], context
+    elif verb == "MKD" or verb == "CWD" or verb == "RMD":
+        context['cmd_socket'].sendall("%s %s\r\n" % (verb, parameter))
+        reply = recv_single_msg(context['cmd_socket'])  # context['cmd_socket'].recv(MAX_MSG_LENGTH)
+        return [{'type': 'reply', 'content': reply}], context
+    elif verb == "TYPE" or verb == "SYST" or verb == "QUIT":
+        context['cmd_socket'].sendall("%s\r\n" % (verb))
+        reply = recv_single_msg(context['cmd_socket'])  # context['cmd_socket'].recv(MAX_MSG_LENGTH)
+        return [{'type': 'reply', 'content': reply}], context
 
-main()
+
+# GUI
+def gui():
+    context = {}
+
+    def setServerInfo():
+        serverInfoDialog = Tk()
+        serverInfoDialog.geometry('480x50+300+300')
+        host = StringVar()
+        host.set(default_server_host)
+        port = StringVar()
+        port.set(str(default_server_port))
+        hostEntry = Entry(serverInfoDialog, textvariable=host, width=20)
+        portEntry = Entry(serverInfoDialog, textvariable=port, width=10)
+        hostEntry.grid(row=0, column=0, padx=15, pady=10)
+        portEntry.grid(row=0, column=1)
+
+        def submit():
+            # global portval
+            # global hostval
+            # portval = port.get()
+            # hostval = host.get()
+            global context
+            try:
+                portval = port.get()
+                hostval = host.get()
+                cmd_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP)
+                cmd_socket.connect((hostval, int(portval)))
+                print("Command socket %s." % (str(cmd_socket.getsockname())))
+                print("Waiting for the server to send greeting message...")
+                greeting = recv_single_msg(cmd_socket)  # cmd_socket.recv(MAX_MSG_LENGTH)
+                assert greeting.startswith("220 ") and greeting.endswith('\r\n'), "Wrong message from server."
+                greeting = greeting[:len(greeting) - 2]
+                print("Receive greeting: %s" % (greeting))
+                file_socket = None
+                mode = 0  # 0 for unset, 1 for PORT, 2 for PASV
+                fhost = ""
+                fport = -1
+                status = 0
+                context = {'cmd_socket': cmd_socket, 'file_socket': file_socket, 'mode': mode, 'fhost': fhost,
+                           'fport': fport, 'status': status, 'port': int(portval), 'host': hostval}
+                serverInfoDialog.destroy()
+            except Exception as e:
+                if e.message == "":
+                    message = "Failed to connect to server."
+                else:
+                    message = e.message
+                tkMessageBox.showinfo("Error", message)
+                context = {}
+                serverInfoDialog.destroy()
+                setServerInfo()
+                return
+            login()
+
+        def cancel():
+            serverInfoDialog.destroy()
+        OKButton = Button(serverInfoDialog, command=submit, text="OK")
+        OKButton.grid(row=0, column=2)
+        cancelButton = Button(serverInfoDialog, command=cancel, text="Cancel")
+        cancelButton.grid(row=0, column=3)
+        serverInfoDialog.mainloop()
+
+    def login():
+        loginDialog = Tk()
+        loginDialog.geometry('480x50+300+300')
+        username = StringVar()
+        username.set('anonymous')
+        password = StringVar()
+        password.set('anonymous@mails.tsinghua.edu.cn')
+        usernameEntry = Entry(loginDialog, textvariable=username, text="Username")
+        passwordEntry = Entry(loginDialog, textvariable=password, text="Password")
+        usernameEntry.grid(row=0, column=0, padx=15, pady=10)
+        passwordEntry.grid(row=0, column=1)
+
+        def submit():
+            global context
+            context['username'] = username.get()
+            context['password'] = password.get()
+            loginDialog.destroy()
+            results, context = get_reply("USER", context['username'], context)
+            results, context = get_reply("PASS", context['password'], context)
+            go()
+
+        def cancel():
+            global context
+            context = {}
+            loginDialog.destroy()
+            setServerInfo()
+        OKButton = Button(loginDialog, command=submit, text="OK")
+        OKButton.grid(row=0, column=2)
+        cancelButton = Button(loginDialog, command=cancel, text="Cancel")
+        cancelButton.grid(row=0, column=3)
+        loginDialog.mainloop()
+
+    def go():
+        global context
+        window = Tk()
+        window.geometry('800x500+200+100')
+        tree = ttk.Treeview(window, selectmode="extended", height=22)
+        tree.heading("#0", text="Name")
+        tree.column("#0", width=780, stretch=True)
+        tree.grid(row=1, column=0, padx=8, columnspan=12)
+        tree.pack()
+        menu_bar = Menu(window, tearoff=False)
+
+        # def my_see(path):  # show all stuff under this dir, and unfold all ancestors of this dir
+        #     dir_names = path.split('/')
+        #     dlen = len(dir_names)
+        #     next_dir_idd = show_dir('', '/', dir_names[0])
+        #     for i in range(dlen - 1):
+        #         next_dir_idd = show_dir(next_dir_idd, '/'.join(dir_names[:i + 1]), dir_names[i + 1])
+        #     show_dir(next_dir_idd, path, '')
+
+        def build_dir(path):  # path: path from root dir, use path+type as iid
+            global context
+            results, context = get_reply("PASV", "", context)
+            results, context = get_reply("LIST", path, context)
+            data = ""
+            for result in results:
+                if result['type'] == 'data':
+                    data = result['content']
+            data_splitted = data.split('\n')
+            data_splitted = data_splitted[:len(data_splitted) - 1]
+            fnum = len(data_splitted)
+            for i in range(1, fnum):
+                fdata = data_splitted[i].split(' ')
+                info = {'name': fdata[-1]}
+                if path == '/':
+                    iid = path + info['name']
+                else:
+                    iid = path + '/' + info['name']
+                if fdata[0].startswith('d'):
+                    info['type'] = 'd'
+                    iid += info['type']
+                    tree.insert(path + 'd', 'end', iid=iid, tags=info['type'], text=info['name'])
+                    build_dir(iid[:len(iid) - 1])
+                else:
+                    info['type'] = 'f'
+                    iid += info['type']
+                    tree.insert(path + 'd', 'end', iid=iid, tags=info['type'], text=info['name'])
+
+        def on_right_click(event):
+            global context
+            iid = tree.identify_row(event.y)
+            try:
+                item = tree.item(iid)
+            except:
+                return
+            tree.selection_set(iid)
+            def download():
+                global context
+                filepath = tkFileDialog.asksaveasfilename()
+                if not isinstance(filepath, str):
+                    return
+                results, context = get_reply("PASV", "", context)
+                results, context = get_reply("RETR", "%s,%s" % (filepath, iid[:len(iid) - 1]), context)
+            def upload():
+                global context
+                filepath = tkFileDialog.askopenfilename()
+                if not isinstance(filepath, str):
+                    return
+                results, context = get_reply("PASV", "", context)
+                fname = filepath.split('/')[-1]
+                fpath_server = iid[:len(iid) - 1] + '/' + fname
+                results, context = get_reply("STOR", "%s,%s" % (fpath_server, filepath), context)
+                fiid = fpath_server + 'f'
+                try:
+                    tree.item(fiid)
+                except:
+                    tree.insert(iid, 'end', iid=fiid, text=fname)
+                tree.see(fiid)
+                tree.selection_set(fiid)
+            def delete_dir():
+                global context
+                results, context = get_reply("RMD", iid[:len(iid) - 1], context)
+                tree.delete(iid)
+            menu_bar.delete(0, END)
+            menu_bar.post(event.x_root, event.y_root)
+            if iid.endswith('d'):  # dir
+                menu_bar.add_command(label="Upload", command=upload)
+                menu_bar.add_command(label="Delete", command=delete_dir)
+            else:
+                menu_bar.add_command(label="Download", command=download)
+
+        def on_left_click(event):
+            menu_bar.delete(0, END)
+
+        tree.insert('', 'end', iid='/d', tags='d', text='/')
+        build_dir('/')
+        tree.see(default_name_prefix + 'd')
+        tree.selection_set(default_name_prefix + "d")
+        tree.bind("<Button-3>", on_right_click)
+        tree.bind("<Button-1>", on_left_click)
+
+        window.mainloop()
+    setServerInfo()
+
+gui()
