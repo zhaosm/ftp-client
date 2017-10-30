@@ -4,6 +4,7 @@ from Tkinter import *
 import ttk
 import tkMessageBox
 import tkFileDialog
+import os
 
 default_server_host = "127.0.0.1"
 default_server_port = 21
@@ -117,9 +118,8 @@ def get_reply(verb, parameter, context):
         assert reply.startswith("230") and reply.endswith("\r\n"), "PASS: Error message from server."
         context['status'] = 2
         return [{"type": "reply", "content": reply}], context
-    elif context['status'] != 2:
-        raise Exception("%s: Wrong status." % (verb))
     if verb == "PORT":  # open new port
+        assert context['status'] == 2, "PORT: Wrong status."
         parameter_splitted = parameter.split(',')
         context['fhost'] = '.'.join(parameter_splitted[:4])
         context['fport'] = int(parameter_splitted[4]) * 256 + int(parameter_splitted[5])
@@ -132,6 +132,7 @@ def get_reply(verb, parameter, context):
         reply = recv_single_msg(context['cmd_socket'])  # context['cmd_socket'].recv(MAX_MSG_LENGTH)
         return [{"type": "reply", "content": reply}], context
     elif verb == "PASV":
+        assert context['status'] == 2, "PASV: Wrong status."
         context['cmd_socket'].send("PASV\r\n")
         reply = recv_single_msg(context['cmd_socket'])  # context['cmd_socket'].recv(MAX_MSG_LENGTH)
         addr_splitted = reply.split(' ')[-1].split(',')
@@ -140,6 +141,7 @@ def get_reply(verb, parameter, context):
         context['mode'] = 2
         return [{'type': 'reply', 'content': reply}], context
     elif verb == "LIST":
+        assert context['status'] == 2, "LIST: Wrong status."
         assert context['mode'] == 1 or context['mode'] == 2, "LIST: Need to specify PORT or PASV first."
         if context['file_socket']:
             context['file_socket'].close()
@@ -173,8 +175,11 @@ def get_reply(verb, parameter, context):
         context['file_socket'] = None
         return [{"type": "reply", "content": reply1}, {"type": "data", "content": data}, {'type': 'reply', 'content': reply2}], context
     elif verb == "RETR":
+        assert context['status'] == 2, "RETR: Wrong status."
         assert context['mode'] == 1 or context['mode'] == 2, "RETR: Need to specify PORT or PASV first."
         fpaths = parameter.split(',')
+        if len(fpaths) == 1:
+            fpaths.append(fpaths[0])
         context['file_socket'] = socket.socket(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP)
         if context['mode'] == 1:  # PORT
             context['file_socket'].bind((context['fhost'], context['fport']))
@@ -203,12 +208,15 @@ def get_reply(verb, parameter, context):
         assert reply2.startswith("226 ") and reply1.endswith('\r\n'), "LIST: Wrong reply from server."
         return [{"type": "reply", "content": reply1}, {'type': 'reply', 'content': reply2}], context
     elif verb == "STOR":  # STOR dest,source
+        assert context['status'] == 2, "STOR: Wrong status."
         assert context['mode'] == 1 or context['mode'] == 2, "STOR: Need to specify PORT or PASV first."
         context['file_socket'] = socket.socket(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP)
         if context['mode'] == 1:  # PORT
             context['file_socket'].bind((context['fhost'], context['fport']))
             context['file_socket'].listen(1)  # only listen to server
         fpaths = parameter.split(',')
+        if len(fpaths) == 1:
+            fpaths.append(fpaths[0])
         context['cmd_socket'].sendall("%s %s\r\n" % (verb, fpaths[0]))
         reply1 = recv_single_msg(context['cmd_socket'])  # context['cmd_socket'].recv(MAX_MSG_LENGTH)
         assert reply1.startswith("150 ") and reply1.endswith('\r\n'), "STOR: Wrong reply from server."
@@ -227,11 +235,27 @@ def get_reply(verb, parameter, context):
         reply2 = recv_single_msg(context['cmd_socket'])  # context['cmd_socket'].recv(MAX_MSG_LENGTH)
         assert reply2.startswith("226 ") and reply1.endswith('\r\n'), "STOR: Wrong reply from server."
         return [{"type": "reply", "content": reply1}, {"type": "reply", "content": reply2}], context
-    elif verb == "MKD" or verb == "CWD" or verb == "RMD":
+    elif verb == "MKD" or verb == "CWD" or verb == "RMD" or verb == "DELE":
+        assert context['status'] == 2, "%s: Wrong status." % (verb)
         context['cmd_socket'].sendall("%s %s\r\n" % (verb, parameter))
         reply = recv_single_msg(context['cmd_socket'])  # context['cmd_socket'].recv(MAX_MSG_LENGTH)
         return [{'type': 'reply', 'content': reply}], context
+    elif verb == "RNFR":
+        assert context['status'] == 2, "%s: Wrong status." % (verb)
+        context['cmd_socket'].sendall("%s %s\r\n" % (verb, parameter))
+        reply = recv_single_msg(context['cmd_socket'])
+        assert reply.startswith("350 ") and reply.endswith("\r\n"), "RNFR: Error message from server."
+        context['status'] = 3
+        return [{'type': 'reply', 'content': reply}], context
+    elif verb == "RNTO":
+        assert context['status'] == 3, "RNTO: Wrong server status."
+        context['status'] = 2
+        context['cmd_socket'].sendall("%s %s\r\n" % (verb, parameter))
+        reply = recv_single_msg(context['cmd_socket'])
+        assert reply.startswith("250 ") and reply.endswith("\r\n"), "RNTO: Error message from server."
+        return [{'type': 'reply', 'content': reply}], context
     elif verb == "TYPE" or verb == "SYST" or verb == "QUIT":
+        assert context['status'] == 2, "%s: Wrong status." % (verb)
         context['cmd_socket'].sendall("%s\r\n" % (verb))
         reply = recv_single_msg(context['cmd_socket'])  # context['cmd_socket'].recv(MAX_MSG_LENGTH)
         return [{'type': 'reply', 'content': reply}], context
@@ -331,106 +355,191 @@ def gui():
         loginDialog.mainloop()
 
     def go():
-        global context
         window = Tk()
-        window.geometry('800x500+200+100')
-        tree = ttk.Treeview(window, selectmode="extended", height=22)
-        tree.heading("#0", text="Name")
-        tree.column("#0", width=780, stretch=True)
-        tree.grid(row=1, column=0, padx=8, columnspan=12)
-        tree.pack()
-        menu_bar = Menu(window, tearoff=False)
-
-        # def my_see(path):  # show all stuff under this dir, and unfold all ancestors of this dir
-        #     dir_names = path.split('/')
-        #     dlen = len(dir_names)
-        #     next_dir_idd = show_dir('', '/', dir_names[0])
-        #     for i in range(dlen - 1):
-        #         next_dir_idd = show_dir(next_dir_idd, '/'.join(dir_names[:i + 1]), dir_names[i + 1])
-        #     show_dir(next_dir_idd, path, '')
-
-        def build_dir(path):  # path: path from root dir, use path+type as iid
+        try:
             global context
-            results, context = get_reply("PASV", "", context)
-            results, context = get_reply("LIST", path, context)
-            data = ""
-            for result in results:
-                if result['type'] == 'data':
-                    data = result['content']
-            data_splitted = data.split('\n')
-            data_splitted = data_splitted[:len(data_splitted) - 1]
-            fnum = len(data_splitted)
-            for i in range(1, fnum):
-                fdata = data_splitted[i].split(' ')
-                info = {'name': fdata[-1]}
-                if path == '/':
-                    iid = path + info['name']
-                else:
-                    iid = path + '/' + info['name']
-                if fdata[0].startswith('d'):
-                    info['type'] = 'd'
-                    iid += info['type']
-                    tree.insert(path + 'd', 'end', iid=iid, tags=info['type'], text=info['name'])
-                    build_dir(iid[:len(iid) - 1])
-                else:
-                    info['type'] = 'f'
-                    iid += info['type']
-                    tree.insert(path + 'd', 'end', iid=iid, tags=info['type'], text=info['name'])
+            window.geometry('800x500+200+100')
+            tree = ttk.Treeview(window, selectmode="extended", height=22)
+            tree.heading("#0", text="Name")
+            tree.column("#0", width=800, stretch=True)
+            tree.grid(row=1, column=0, padx=8, columnspan=12)
+            tree.pack()
+            menu_bar = Menu(window, tearoff=False)
 
-        def on_right_click(event):
-            global context
-            iid = tree.identify_row(event.y)
-            try:
-                item = tree.item(iid)
-            except:
-                return
-            tree.selection_set(iid)
-            def download():
+            # def my_see(path):  # show all stuff under this dir, and unfold all ancestors of this dir
+            #     dir_names = path.split('/')
+            #     dlen = len(dir_names)
+            #     next_dir_idd = show_dir('', '/', dir_names[0])
+            #     for i in range(dlen - 1):
+            #         next_dir_idd = show_dir(next_dir_idd, '/'.join(dir_names[:i + 1]), dir_names[i + 1])
+            #     show_dir(next_dir_idd, path, '')
+
+            def build_dir(path):  # path: path from root dir, use path+type as iid
                 global context
-                filepath = tkFileDialog.asksaveasfilename()
-                if not isinstance(filepath, str):
-                    return
                 results, context = get_reply("PASV", "", context)
-                results, context = get_reply("RETR", "%s,%s" % (filepath, iid[:len(iid) - 1]), context)
-            def upload():
+                results, context = get_reply("LIST", path, context)
+                data = ""
+                for result in results:
+                    if result['type'] == 'data':
+                        data = result['content']
+                data_splitted = data.split('\n')
+                data_splitted = data_splitted[:len(data_splitted) - 1]
+                fnum = len(data_splitted)
+                for i in range(1, fnum):
+                    fdata = data_splitted[i].split(' ')
+                    info = {'name': fdata[-1]}
+                    iid = os.path.join(path, info['name'])
+                    # if path == '/':
+                    #     iid = path + info['name']
+                    # else:
+                    #     iid = path + '/' + info['name']
+                    if fdata[0].startswith('d'):
+                        info['type'] = 'd'
+                        iid += info['type']
+                        tree.insert(path + 'd', 'end', iid=iid, tags=info['type'], text=info['name'])
+                        build_dir(iid[:len(iid) - 1])
+                    else:
+                        info['type'] = 'f'
+                        iid += info['type']
+                        tree.insert(path + 'd', 'end', iid=iid, tags=info['type'], text=info['name'])
+
+            def on_right_click(event):
                 global context
-                filepath = tkFileDialog.askopenfilename()
-                if not isinstance(filepath, str):
+                iid = tree.identify_row(event.y)
+                if iid == "":  # didn't select a dir
                     return
-                results, context = get_reply("PASV", "", context)
-                fname = filepath.split('/')[-1]
-                fpath_server = iid[:len(iid) - 1] + '/' + fname
-                results, context = get_reply("STOR", "%s,%s" % (fpath_server, filepath), context)
-                fiid = fpath_server + 'f'
                 try:
-                    tree.item(fiid)
+                    item = tree.item(iid)
                 except:
-                    tree.insert(iid, 'end', iid=fiid, text=fname)
-                tree.see(fiid)
-                tree.selection_set(fiid)
-            def delete_dir():
-                global context
-                results, context = get_reply("RMD", iid[:len(iid) - 1], context)
-                tree.delete(iid)
-            menu_bar.delete(0, END)
-            menu_bar.post(event.x_root, event.y_root)
-            if iid.endswith('d'):  # dir
-                menu_bar.add_command(label="Upload", command=upload)
-                menu_bar.add_command(label="Delete", command=delete_dir)
-            else:
-                menu_bar.add_command(label="Download", command=download)
+                    return
+                tree.selection_set(iid)
 
-        def on_left_click(event):
-            menu_bar.delete(0, END)
+                def download():
+                    global context
+                    filepath = tkFileDialog.asksaveasfilename()
+                    if not isinstance(filepath, str):
+                        return
+                    results, context = get_reply("PASV", "", context)
+                    results, context = get_reply("RETR", "%s,%s" % (filepath, iid[:len(iid) - 1]), context)
 
-        tree.insert('', 'end', iid='/d', tags='d', text='/')
-        build_dir('/')
-        tree.see(default_name_prefix + 'd')
-        tree.selection_set(default_name_prefix + "d")
-        tree.bind("<Button-3>", on_right_click)
-        tree.bind("<Button-1>", on_left_click)
+                def upload():
+                    global context
+                    filepath = tkFileDialog.askopenfilename()
+                    if not isinstance(filepath, str):
+                        return
+                    results, context = get_reply("PASV", "", context)
+                    fname = filepath.split('/')[-1]
+                    fpath_server = iid[:len(iid) - 1] + '/' + fname
+                    results, context = get_reply("STOR", "%s,%s" % (fpath_server, filepath), context)
+                    fiid = fpath_server + 'f'
+                    try:
+                        tree.item(fiid)
+                    except:
+                        tree.insert(iid, 'end', tags=fiid[-1], iid=fiid, text=fname)
+                    tree.see(fiid)
+                    tree.selection_set(fiid)
 
-        window.mainloop()
+                def delete():
+                    if iid == "/d":
+                        tkMessageBox.showinfo("Error", "You don't have privilege to delete the root folder.")
+                        return
+                    global context
+                    if iid.endswith('d'):
+                        results, context = get_reply("RMD", iid[:len(iid) - 1], context)
+                    else:
+                        results, context = get_reply("DELE", iid[:len(iid) - 1], context)
+                    tree.delete(iid)
+
+                def rename():
+                    if iid == "/d":
+                        tkMessageBox.showinfo("Error", "You don't have privilege to rename the root folder.")
+                        return
+                    parentiid = tree.parent(iid)
+
+                    get_dest_name_dialog = Tk()
+                    get_dest_name_dialog.geometry('480x50+300+300')
+                    dest = StringVar()
+                    destEntry = Entry(get_dest_name_dialog, textvariable=dest, text="New name")
+                    destEntry.grid(row=0, column=0, padx=15, pady=10)
+
+                    def submit():
+                        new_name = destEntry.get()
+                        get_dest_name_dialog.destroy()
+                        type = iid[-1]
+                        new_iid = os.path.join(parentiid[:len(parentiid) - 1], new_name) + type
+                        global context
+                        results, context = get_reply("RNFR", iid[:len(iid) - 1], context)
+                        results, context = get_reply("RNTO", new_iid[:len(new_iid) - 1], context)
+                        index = tree.index(iid)
+                        tree.delete(iid)
+                        tree.insert(parentiid, index, tags=new_iid[-1], iid=new_iid, text=new_name)
+                        build_dir(new_iid[:len(new_iid) - 1])
+                        tree.selection_set(new_iid)
+
+                    def cancel():
+                        get_dest_name_dialog.destroy()
+
+                    ok_button = Button(get_dest_name_dialog, command=submit, text="OK")
+                    ok_button.grid(row=0, column=2)
+                    cancel_button = Button(get_dest_name_dialog, command=cancel, text="Cancel")
+                    cancel_button.grid(row=0, column=3)
+                    get_dest_name_dialog.mainloop()
+
+                def create():
+                    get_new_dir_name_dialog = Tk()
+                    get_new_dir_name_dialog.geometry('480x50+300+300')
+                    new_dir_name = StringVar()
+                    newDirNameEntry = Entry(get_new_dir_name_dialog, textvariable=new_dir_name, text="Name")
+                    newDirNameEntry.grid(row=0, column=0, padx=15, pady=10)
+
+                    def submit():
+                        new_name = newDirNameEntry.get()
+                        get_new_dir_name_dialog.destroy()
+                        new_dir_path = os.path.join(iid[:len(iid) - 1], new_name)
+                        global context
+                        results, context = get_reply("MKD", new_dir_path, context)
+                        new_iid = new_dir_path + 'd'
+                        tree.insert(iid, 0, tags=new_iid[-1], iid=new_iid, text=new_name)
+                        tree.see(new_iid)
+                        tree.selection_set(new_iid)
+
+                    def cancel():
+                        get_new_dir_name_dialog.destroy()
+
+                    ok_button = Button(get_new_dir_name_dialog, command=submit, text="OK")
+                    ok_button.grid(row=0, column=2)
+                    cancel_button = Button(get_new_dir_name_dialog, command=cancel, text="Cancel")
+                    cancel_button.grid(row=0, column=3)
+                    get_new_dir_name_dialog.mainloop()
+
+                menu_bar.delete(0, END)
+                menu_bar.post(event.x_root, event.y_root)
+                if iid.endswith('d'):  # dir
+                    menu_bar.add_command(label="Upload", command=upload)
+                    menu_bar.add_command(label="Create dir", command=create)
+                else:
+                    menu_bar.add_command(label="Download", command=download)
+                menu_bar.add_command(label="Rename", command=rename)
+                menu_bar.add_command(label="Delete", command=delete)
+
+            def on_left_click(event):
+                menu_bar.delete(0, END)
+
+            tree.insert('', 'end', iid='/d', tags='d', text='/')
+            build_dir('/')
+            tree.see(default_name_prefix + 'd')
+            tree.selection_set(default_name_prefix + "d")
+            tree.bind("<Button-3>", on_right_click)
+            tree.bind("<Button-1>", on_left_click)
+            tree.tag_configure('d', foreground='blue')
+
+            window.mainloop()
+        except Exception as e:
+            tkMessageBox.showinfo("Error", e.message)
+            context = {}
+            window.destroy()
+            setServerInfo()
+
     setServerInfo()
 
 gui()
