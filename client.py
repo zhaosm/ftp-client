@@ -135,7 +135,10 @@ def get_reply(verb, parameter, context):
         assert context['status'] == 2, "PASV: Wrong status."
         context['cmd_socket'].send("PASV\r\n")
         reply = recv_single_msg(context['cmd_socket'])  # context['cmd_socket'].recv(MAX_MSG_LENGTH)
-        addr_splitted = reply.split(' ')[-1].split(',')
+        assert reply.startswith("227 ") and reply.endswith("\r\n"), "PASV: Wrong reply from server: %s" % reply
+        addr_idx_start = re.match(r'[1-9][0-9]+ (\D*)[0-9]', reply).end() - 1
+        addr_idx_end = re.match(r'[1-9][0-9]+ (\D*)[0-9]*,[0-9]*,[0-9]*,[0-9]*,[0-9]*,[0-9]*', reply).end()
+        addr_splitted = reply[addr_idx_start:addr_idx_end].split(' ')[-1].split(',')
         context['fhost'] = '.'.join(addr_splitted[:4])
         context['fport'] = int(addr_splitted[4]) * 256 + int(addr_splitted[5])
         context['mode'] = 2
