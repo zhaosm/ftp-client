@@ -152,19 +152,22 @@ def get_reply(verb, parameter, context):
     elif verb == "LIST":
         assert context['status'] == 2, "LIST: Wrong status."
         assert context['mode'] == 1 or context['mode'] == 2, "LIST: Need to specify PORT or PASV first."
+
+        # ensure file socket closed
+        if context['file_socket']:
+            context['file_socket'].close()
+        context['file_socket'] = socket.socket(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP)
+        if context['mode'] == 1:  # PORT
+            context['file_socket'].bind((context['fhost'], context['fport']))
+            context['file_socket'].listen(1)  # only listen to server
+
         # send command
         if parameter == "":
             context['cmd_socket'].sendall("LIST\r\n")
         else:
             context['cmd_socket'].sendall("%s %s\r\n" % (verb, parameter))
-        # ensure file socket closed
-        if context['file_socket']:
-            context['file_socket'].close()
-        context['file_socket'] = socket.socket(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP)
         # establish connection
         if context['mode'] == 1:  # PORT
-            context['file_socket'].bind((context['fhost'], context['fport']))
-            context['file_socket'].listen(1)  # only listen to server
             conn, addr = context['file_socket'].accept()
         else:
             context['file_socket'].connect((context['fhost'], context['fport']))
@@ -199,15 +202,20 @@ def get_reply(verb, parameter, context):
         assert context['status'] == 2, "RETR: Wrong status."
         assert context['mode'] == 1 or context['mode'] == 2, "RETR: Need to specify PORT or PASV first."
         assert parameter != '', "RETR: You should specify file path."
+
+        if context['file_socket']:
+            context['file_socket'].close()
+        context['file_socket'] = socket.socket(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP)
+        if context['mode'] == 1:  # PORT
+            context['file_socket'].bind((context['fhost'], context['fport']))
+            context['file_socket'].listen(1)  # only listen to server
+
         fpaths = parameter.split(',')
         if len(fpaths) == 1:
             fpaths.append(fpaths[0])
         context['cmd_socket'].sendall("%s %s\r\n" % (verb, fpaths[1]))
 
-        context['file_socket'] = socket.socket(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP)
         if context['mode'] == 1:  # PORT
-            context['file_socket'].bind((context['fhost'], context['fport']))
-            context['file_socket'].listen(1)  # only listen to server
             conn, addr = context['file_socket'].accept()
         else:
             context['file_socket'].connect((context['fhost'], context['fport']))
@@ -244,6 +252,13 @@ def get_reply(verb, parameter, context):
         assert context['mode'] == 1 or context['mode'] == 2, "STOR: Need to specify PORT or PASV first."
         assert parameter != '', "You should specify file path."
 
+        if context['file_socket']:
+            context['file_socket'].close()
+        context['file_socket'] = socket.socket(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP)
+        if context['mode'] == 1:  # PORT
+            context['file_socket'].bind((context['fhost'], context['fport']))
+            context['file_socket'].listen(1)  # only listen to server
+
         fpaths = parameter.split(',')
         if len(fpaths) == 1:
             fpaths.append(fpaths[0])
@@ -251,10 +266,7 @@ def get_reply(verb, parameter, context):
             data = f.read()
 
         context['cmd_socket'].sendall("%s %s\r\n" % (verb, fpaths[0]))
-        context['file_socket'] = socket.socket(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP)
         if context['mode'] == 1:  # PORT
-            context['file_socket'].bind((context['fhost'], context['fport']))
-            context['file_socket'].listen(1)  # only listen to server
             conn, addr = context['file_socket'].accept()
         else:
             context['file_socket'].connect((context['fhost'], context['fport']))
