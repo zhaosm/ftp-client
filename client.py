@@ -15,6 +15,8 @@ default_name_prefix = "/"
 
 
 def recv_single_msg(sock):
+    # read from server through sock until a complete message is received
+    # then put remained data in buffer and return the message
     global my_buffer
     result = my_buffer
     while True:
@@ -29,7 +31,7 @@ def recv_single_msg(sock):
         result += sock.recv(MAX_MSG_LENGTH)
 
 
-def parse_cmd(cmd):  # input command from client without \r\n as end mark
+def parse_cmd(cmd):  # cmd: input command from client without \r\n as end mark
     cmd_splitted = cmd.split(' ')
     if len(cmd_splitted) == 1:  # no parameters
         verb = cmd_splitted[0]
@@ -42,13 +44,18 @@ def parse_cmd(cmd):  # input command from client without \r\n as end mark
 
 
 def command(h, p):
+    # command line version
+    # read commands from user through standard input and send message to server
+    # then output replies from server
+    # if Exception occurred or received error message from server, info the user and ask for new command
+    # exit when user entered QUIT or ABOR
     global my_buffer
     try:
         cmd_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP)
         cmd_socket.connect((h, int(p)))
         print("Command socket %s." % (str(cmd_socket.getsockname())))
         print("Waiting for the server to send greeting message...")
-        greeting = recv_single_msg(cmd_socket)  # cmd_socket.recv(MAX_MSG_LENGTH)
+        greeting = recv_single_msg(cmd_socket)
         assert greeting.startswith("220 ") and greeting.endswith('\r\n'), "Wrong message from server."
         greeting = greeting[:len(greeting) - 2]
         print("Receive greeting: %s" % (greeting))
@@ -95,6 +102,8 @@ def command(h, p):
 
 
 def get_reply(verb, parameter, context):
+    # context includes user status, transmitting mode, sockets info, etc.
+    # handle user commands, return replies and new context
     if verb == "USER":
         assert context['status'] == 0, "USER: Wrong status."
         context['cmd_socket'].sendall("%s %s\r\n" % (verb, parameter))
@@ -107,7 +116,7 @@ def get_reply(verb, parameter, context):
         if context['status'] != 1:
             raise Exception("PASS: Wrong status.")
         context['cmd_socket'].sendall("%s %s\r\n" % (verb, parameter))
-        reply = recv_single_msg(context['cmd_socket'])  # context['cmd_socket'].recv(MAX_MSG_LENGTH)
+        reply = recv_single_msg(context['cmd_socket'])
         assert reply.startswith("230") and reply.endswith("\r\n"), "PASS: Error message from server."
         context['status'] = 2
         return [{"type": "reply", "content": reply}], context
@@ -122,13 +131,13 @@ def get_reply(verb, parameter, context):
             context['file_socket'] = None
         context['mode'] = 1
         context['cmd_socket'].sendall("%s %s\r\n" % (verb, parameter))
-        reply = recv_single_msg(context['cmd_socket'])  # context['cmd_socket'].recv(MAX_MSG_LENGTH)
+        reply = recv_single_msg(context['cmd_socket'])
         assert reply.startswith("200 ") and reply.endswith("\r\n"), "Wrong reply from server: %s." % reply
         return [{"type": "reply", "content": reply}], context
     elif verb == "PASV":
         assert context['status'] == 2, "PASV: Wrong status."
         context['cmd_socket'].send("PASV\r\n")
-        reply = recv_single_msg(context['cmd_socket'])  # context['cmd_socket'].recv(MAX_MSG_LENGTH)
+        reply = recv_single_msg(context['cmd_socket'])
         assert reply.startswith("227 ") and reply.endswith("\r\n"), "PASV: Wrong reply from server: %s" % reply
         addr_idx_start = re.match(r'[1-9][0-9]+ (\D*)[0-9]', reply).end() - 1
         addr_idx_end = re.match(r'[1-9][0-9]+ (\D*)[0-9]*,[0-9]*,[0-9]*,[0-9]*,[0-9]*,[0-9]*', reply).end()
@@ -150,25 +159,37 @@ def get_reply(verb, parameter, context):
             context['cmd_socket'].sendall("LIST\r\n")
         else:
             context['cmd_socket'].sendall("%s %s\r\n" % (verb, parameter))
-        reply1 = recv_single_msg(context['cmd_socket'])  # context['cmd_socket'].recv(MAX_MSG_LENGTH)
-        assert reply1.startswith("150 ") and reply1.endswith('\r\n'), "LIST: Wrong reply from server."
+
         if context['mode'] == 1:
             conn, addr = context['file_socket'].accept()
         else:
             context['file_socket'].connect((context['fhost'], context['fport']))
             conn = context['file_socket']
             addr = (context['fhost'], context['fport'])
+
+        reply1 = recv_single_msg(context['cmd_socket'])
+        assert reply1.startswith("150 ") and reply1.endswith('\r\n'), "LIST: Wrong reply from server %s." % (reply1)
+        # if context['mode'] == 1:
+        #     conn, addr = context['file_socket'].accept()
+        # else:
+        #     context['file_socket'].connect((context['fhost'], context['fport']))
+        #     conn = context['file_socket']
+        #     addr = (context['fhost'], context['fport'])
         context['mode'] = 0
         print("%s: Connected to %s" % (verb, addr))
         data = ""
         while True:
-            new_data = conn.recv(MAX_MSG_LENGTH)
-            assert len(new_data) >= 0, "LIST: Error reading from server."
-            if len(new_data) == 0:
+            try:
+                new_data = conn.recv(MAX_MSG_LENGTH)
+                if len(new_data) == 0:
+                    break
+                data += new_data
+            except:
                 break
-            data += new_data
-        reply2 = recv_single_msg(context['cmd_socket'])  # context['cmd_socket'].recv(MAX_MSG_LENGTH)
+        reply2 = recv_single_msg(context['cmd_socket'])
         assert reply2.startswith("226 ") and reply1.endswith('\r\n'), "LIST: Wrong reply from server."
+        if context['mode'] == 1:
+            conn.close()
         context['file_socket'].close()
         context['file_socket'] = None
         return [{"type": "reply", "content": reply1}, {"type": "data", "content": data}, {'type': 'reply', 'content': reply2}], context
@@ -184,7 +205,7 @@ def get_reply(verb, parameter, context):
             context['file_socket'].bind((context['fhost'], context['fport']))
             context['file_socket'].listen(1)  # only listen to server
         context['cmd_socket'].sendall("%s %s\r\n" % (verb, fpaths[1]))
-        reply1 = recv_single_msg(context['cmd_socket'])  # context['cmd_socket'].recv(MAX_MSG_LENGTH)
+        reply1 = recv_single_msg(context['cmd_socket'])
         assert reply1.startswith("150 ") and reply1.endswith('\r\n')
         if context['mode'] == 1:
             conn, addr = context['file_socket'].accept()
@@ -206,10 +227,10 @@ def get_reply(verb, parameter, context):
         if context['mode'] == 1:
             context['file_socket'].close()
         context['file_socket'] = None
-        reply2 = recv_single_msg(context['cmd_socket'])  # context['cmd_socket'].recv(MAX_MSG_LENGTH)
+        reply2 = recv_single_msg(context['cmd_socket'])
         assert reply2.startswith("226 ") and reply2.endswith('\r\n'), "RETR: Wrong reply from server."
         return [{"type": "reply", "content": reply1}, {'type': 'reply', 'content': reply2}], context
-    elif verb == "STOR":  # STOR dest,source
+    elif verb == "STOR":  # STOR dest,source or STOR fname
         assert context['status'] == 2, "STOR: Wrong status."
         assert context['mode'] == 1 or context['mode'] == 2, "STOR: Need to specify PORT or PASV first."
         assert parameter != '', "You should specify file path."
@@ -223,7 +244,7 @@ def get_reply(verb, parameter, context):
             context['file_socket'].bind((context['fhost'], context['fport']))
             context['file_socket'].listen(1)  # only listen to server
         context['cmd_socket'].sendall("%s %s\r\n" % (verb, fpaths[0]))
-        reply1 = recv_single_msg(context['cmd_socket'])  # context['cmd_socket'].recv(MAX_MSG_LENGTH)
+        reply1 = recv_single_msg(context['cmd_socket'])
         assert reply1.startswith("150 ") and reply1.endswith('\r\n'), "STOR: Wrong reply from server."
         if context['mode'] == 1:
             conn, addr = context['file_socket'].accept()
@@ -238,13 +259,13 @@ def get_reply(verb, parameter, context):
         if context['mode'] == 1:
             context['file_socket'].close()
         context['file_socket'] = None
-        reply2 = recv_single_msg(context['cmd_socket'])  # context['cmd_socket'].recv(MAX_MSG_LENGTH)
+        reply2 = recv_single_msg(context['cmd_socket'])
         assert reply2.startswith("226 ") and reply2.endswith('\r\n'), "STOR: Wrong reply from server."
         return [{"type": "reply", "content": reply1}, {"type": "reply", "content": reply2}], context
     elif verb == "MKD" or verb == "CWD" or verb == "RMD" or verb == "DELE":
         assert context['status'] == 2, "%s: Wrong status." % (verb)
         context['cmd_socket'].sendall("%s %s\r\n" % (verb, parameter))
-        reply = recv_single_msg(context['cmd_socket'])  # context['cmd_socket'].recv(MAX_MSG_LENGTH)
+        reply = recv_single_msg(context['cmd_socket'])
         return [{'type': 'reply', 'content': reply}], context
     elif verb == "RNFR":
         assert context['status'] == 2, "%s: Wrong status." % (verb)
@@ -263,18 +284,20 @@ def get_reply(verb, parameter, context):
     elif verb == "TYPE" or verb == "SYST":
         assert context['status'] == 2, "%s: Wrong status." % (verb)
         context['cmd_socket'].sendall("%s\r\n" % (verb))
-        reply = recv_single_msg(context['cmd_socket'])  # context['cmd_socket'].recv(MAX_MSG_LENGTH)
+        reply = recv_single_msg(context['cmd_socket'])
         return [{'type': 'reply', 'content': reply}], context
     elif verb == "QUIT" or verb == "ABOR":
         context['cmd_socket'].sendall("%s\r\n" % (verb))
-        reply = recv_single_msg(context['cmd_socket'])  # context['cmd_socket'].recv(MAX_MSG_LENGTH)
+        reply = recv_single_msg(context['cmd_socket'])
         return [{'type': 'reply', 'content': reply}], context
 
-# GUI
+
 def gui():
+    # gui version
     context = {}
 
     def setServerInfo():
+        # set host and port
         serverInfoDialog = Tk()
         serverInfoDialog.title('Enter host and port')
         serverInfoDialog.geometry('500x50+100+100')
@@ -296,7 +319,7 @@ def gui():
                 cmd_socket.connect((hostval, int(portval)))
                 print("Command socket %s." % (str(cmd_socket.getsockname())))
                 print("Waiting for the server to send greeting message...")
-                greeting = recv_single_msg(cmd_socket)  # cmd_socket.recv(MAX_MSG_LENGTH)
+                greeting = recv_single_msg(cmd_socket)
                 assert greeting.startswith("220 ") and greeting.endswith('\r\n'), "Wrong message from server."
                 greeting = greeting[:len(greeting) - 2]
                 print("Receive greeting: %s" % (greeting))
@@ -309,11 +332,7 @@ def gui():
                            'fport': fport, 'status': status, 'port': int(portval), 'host': hostval}
                 serverInfoDialog.destroy()
             except Exception as e:
-                if e.message == "":
-                    message = "Failed to connect to server."
-                else:
-                    message = e.message
-                tkMessageBox.showinfo("Error", message)
+                tkMessageBox.showinfo("Error", e)
                 context = {}
                 serverInfoDialog.destroy()
                 setServerInfo()
@@ -329,6 +348,7 @@ def gui():
         serverInfoDialog.mainloop()
 
     def login():
+        # send username and password
         loginDialog = Tk()
         loginDialog.title('Login')
         loginDialog.geometry('500x50+100+100')
@@ -370,6 +390,8 @@ def gui():
         loginDialog.mainloop()
 
     def go():
+        # show the working directory using a ttk.Treeview object
+        # users are able to modify dir/file by right-clicking dir/file's row
         window = Tk()
         window.title('FTP Client')
         global context
@@ -385,7 +407,9 @@ def gui():
         tree.pack()
         menu_bar = Menu(window, tearoff=False)
 
-        def build_dir(path):  # path: path from root dir, use path+type as iid
+        def build_dir(path):
+            # path: path from root dir, use path+type as iid
+            # show all contents under path recursively
             global context
             results, context = get_reply("PASV", "", context)
             results, context = get_reply("LIST", path, context)
@@ -411,6 +435,7 @@ def gui():
                     tree.insert(path + 'd', 'end', iid=iid, tags=info['type'], text=info['name'], values=(info['time'], info['size']))
 
         def get_info(path, type):
+            # get information of a dir/file specified by path and type
             global context
             path_splitted = path.split('/')
             name = path_splitted[-1]
@@ -434,9 +459,10 @@ def gui():
                                 info['size'] = infos[-5]
                                 return info
             except Exception as e:
-                tkMessageBox.showinfo("Error", e.message)
+                tkMessageBox.showinfo("Error", e)
 
         def on_right_click(event):
+            # show buttons to modify file/dir
             global context
             iid = tree.identify_row(event.y)
             if iid == "":  # didn't select a dir
@@ -549,6 +575,7 @@ def gui():
                 cancel_button.grid(row=0, column=3)
                 get_new_dir_name_dialog.mainloop()
 
+            # when right button clicked, clear menu bar and show a new one at the position user clicked
             menu_bar.delete(0, END)
             menu_bar.post(event.x_root, event.y_root)
             if iid.endswith('d'):  # dir
@@ -560,8 +587,10 @@ def gui():
             menu_bar.add_command(label="Delete", command=delete)
 
         def on_left_click(event):
+            # when left-clicked, clear the menu bar
             menu_bar.delete(0, END)
 
+        # build root dir
         tree.insert('', 'end', iid='/d', tags='d', text='/')
         build_dir('/')
         tree.see(default_name_prefix + 'd')
