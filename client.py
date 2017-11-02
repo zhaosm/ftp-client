@@ -95,7 +95,10 @@ def command(h, p):
         except Exception as e:
             print(e)
             my_buffer = ""
+            # ensure context mode reset
             context['mode'] = 0
+            if context['status'] == 3:
+                context['status'] = 2
             if context['file_socket']:
                 context['file_socket'].close()
             continue
@@ -149,34 +152,30 @@ def get_reply(verb, parameter, context):
     elif verb == "LIST":
         assert context['status'] == 2, "LIST: Wrong status."
         assert context['mode'] == 1 or context['mode'] == 2, "LIST: Need to specify PORT or PASV first."
-        if context['file_socket']:
-            context['file_socket'].close()
-        context['file_socket'] = socket.socket(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP)
-        if context['mode'] == 1:  # PORT
-            context['file_socket'].bind((context['fhost'], context['fport']))
-            context['file_socket'].listen(1)  # only listen to server
+        # send command
         if parameter == "":
             context['cmd_socket'].sendall("LIST\r\n")
         else:
             context['cmd_socket'].sendall("%s %s\r\n" % (verb, parameter))
-
-        if context['mode'] == 1:
+        # ensure file socket closed
+        if context['file_socket']:
+            context['file_socket'].close()
+        context['file_socket'] = socket.socket(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP)
+        # establish connection
+        if context['mode'] == 1:  # PORT
+            context['file_socket'].bind((context['fhost'], context['fport']))
+            context['file_socket'].listen(1)  # only listen to server
             conn, addr = context['file_socket'].accept()
         else:
             context['file_socket'].connect((context['fhost'], context['fport']))
             conn = context['file_socket']
             addr = (context['fhost'], context['fport'])
+        print("%s: Connected to %s" % (verb, addr))
 
+        # get 150 mark
         reply1 = recv_single_msg(context['cmd_socket'])
         assert reply1.startswith("150 ") and reply1.endswith('\r\n'), "LIST: Wrong reply from server %s." % (reply1)
-        # if context['mode'] == 1:
-        #     conn, addr = context['file_socket'].accept()
-        # else:
-        #     context['file_socket'].connect((context['fhost'], context['fport']))
-        #     conn = context['file_socket']
-        #     addr = (context['fhost'], context['fport'])
-        context['mode'] = 0
-        print("%s: Connected to %s" % (verb, addr))
+        # read
         data = ""
         while True:
             try:
@@ -186,12 +185,15 @@ def get_reply(verb, parameter, context):
                 data += new_data
             except:
                 break
+        # get success message
         reply2 = recv_single_msg(context['cmd_socket'])
         assert reply2.startswith("226 ") and reply1.endswith('\r\n'), "LIST: Wrong reply from server."
         if context['mode'] == 1:
             conn.close()
+        # ensure context mode reset before return
         context['file_socket'].close()
         context['file_socket'] = None
+        context['mode'] = 0
         return [{"type": "reply", "content": reply1}, {"type": "data", "content": data}, {'type': 'reply', 'content': reply2}], context
     elif verb == "RETR":
         assert context['status'] == 2, "RETR: Wrong status."
@@ -200,67 +202,78 @@ def get_reply(verb, parameter, context):
         fpaths = parameter.split(',')
         if len(fpaths) == 1:
             fpaths.append(fpaths[0])
+        context['cmd_socket'].sendall("%s %s\r\n" % (verb, fpaths[1]))
+
         context['file_socket'] = socket.socket(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP)
         if context['mode'] == 1:  # PORT
             context['file_socket'].bind((context['fhost'], context['fport']))
             context['file_socket'].listen(1)  # only listen to server
-        context['cmd_socket'].sendall("%s %s\r\n" % (verb, fpaths[1]))
-        reply1 = recv_single_msg(context['cmd_socket'])
-        assert reply1.startswith("150 ") and reply1.endswith('\r\n')
-        if context['mode'] == 1:
             conn, addr = context['file_socket'].accept()
         else:
             context['file_socket'].connect((context['fhost'], context['fport']))
             conn = context['file_socket']
             addr = (context['fhost'], context['fport'])
-        context['mode'] = 0
         print("%s: Connected to %s" % (verb, addr))
+
+        reply1 = recv_single_msg(context['cmd_socket'])
+        assert reply1.startswith("150 ") and reply1.endswith('\r\n')
+
         data = ""
         while True:
-            new_data = conn.recv(MAX_MSG_LENGTH)
-            if len(new_data) == 0:
+            try:
+                new_data = conn.recv(MAX_MSG_LENGTH)
+                if len(new_data) == 0:
+                    break
+                data += new_data
+            except:
                 break
-            data += new_data
         conn.close()
+
         with open(fpaths[0], "wb") as f:
             f.write(data)
+
         if context['mode'] == 1:
             context['file_socket'].close()
         context['file_socket'] = None
         reply2 = recv_single_msg(context['cmd_socket'])
         assert reply2.startswith("226 ") and reply2.endswith('\r\n'), "RETR: Wrong reply from server."
+        context['mode'] = 0
         return [{"type": "reply", "content": reply1}, {'type': 'reply', 'content': reply2}], context
     elif verb == "STOR":  # STOR dest,source or STOR fname
         assert context['status'] == 2, "STOR: Wrong status."
         assert context['mode'] == 1 or context['mode'] == 2, "STOR: Need to specify PORT or PASV first."
         assert parameter != '', "You should specify file path."
+
         fpaths = parameter.split(',')
         if len(fpaths) == 1:
             fpaths.append(fpaths[0])
         with open(fpaths[1], "rb") as f:
             data = f.read()
+
+        context['cmd_socket'].sendall("%s %s\r\n" % (verb, fpaths[0]))
         context['file_socket'] = socket.socket(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP)
         if context['mode'] == 1:  # PORT
             context['file_socket'].bind((context['fhost'], context['fport']))
             context['file_socket'].listen(1)  # only listen to server
-        context['cmd_socket'].sendall("%s %s\r\n" % (verb, fpaths[0]))
-        reply1 = recv_single_msg(context['cmd_socket'])
-        assert reply1.startswith("150 ") and reply1.endswith('\r\n'), "STOR: Wrong reply from server."
-        if context['mode'] == 1:
             conn, addr = context['file_socket'].accept()
         else:
             context['file_socket'].connect((context['fhost'], context['fport']))
             conn = context['file_socket']
             addr = (context['fhost'], context['fport'])
-        context['mode'] = 0
         print("%s: Connected to %s" % (verb, addr))
+
+        reply1 = recv_single_msg(context['cmd_socket'])
+        assert reply1.startswith("150 ") and reply1.endswith('\r\n'), "STOR: Wrong reply from server."
+
         conn.sendall(data)
         conn.close()
         if context['mode'] == 1:
             context['file_socket'].close()
         context['file_socket'] = None
+
         reply2 = recv_single_msg(context['cmd_socket'])
         assert reply2.startswith("226 ") and reply2.endswith('\r\n'), "STOR: Wrong reply from server."
+        context['mode'] = 0
         return [{"type": "reply", "content": reply1}, {"type": "reply", "content": reply2}], context
     elif verb == "MKD" or verb == "CWD" or verb == "RMD" or verb == "DELE":
         assert context['status'] == 2, "%s: Wrong status." % (verb)
@@ -281,7 +294,12 @@ def get_reply(verb, parameter, context):
         reply = recv_single_msg(context['cmd_socket'])
         assert reply.startswith("250 ") and reply.endswith("\r\n"), "RNTO: Error message from server."
         return [{'type': 'reply', 'content': reply}], context
-    elif verb == "TYPE" or verb == "SYST":
+    elif verb == "TYPE":
+        assert context['status'] == 2, "%s: Wrong status." % (verb)
+        context['cmd_socket'].sendall("%s %s\r\n" % (verb, parameter))
+        reply = recv_single_msg(context['cmd_socket'])
+        return [{'type': 'reply', 'content': reply}], context
+    elif verb == "SYST":
         assert context['status'] == 2, "%s: Wrong status." % (verb)
         context['cmd_socket'].sendall("%s\r\n" % (verb))
         reply = recv_single_msg(context['cmd_socket'])
