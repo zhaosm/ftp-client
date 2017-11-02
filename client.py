@@ -11,7 +11,7 @@ default_server_port = 21
 verbs = ["USER", "PASS", "PORT", "PASV", "RETR", "STOR", "QUIT", "TYPE", "LIST", "CWD", "MKD", "RMD", "SYST", "DELE", "RNFR", "RNTO", "ABOR"]
 MAX_MSG_LENGTH = 9000
 my_buffer = ""
-default_name_prefix = "/anonymous"
+default_name_prefix = "/"
 
 
 def recv_single_msg(sock):
