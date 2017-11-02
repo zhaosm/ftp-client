@@ -42,6 +42,7 @@ def parse_cmd(cmd):  # input command from client without \r\n as end mark
 
 
 def command(h, p):
+    global my_buffer
     try:
         cmd_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP)
         cmd_socket.connect((h, int(p)))
@@ -85,7 +86,11 @@ def command(h, p):
                     context['file_socket'].close()
                 break
         except Exception as e:
-            print(e.message)
+            print(e)
+            my_buffer = ""
+            context['mode'] = 0
+            if context['file_socket']:
+                context['file_socket'].close()
             continue
 
 
@@ -208,13 +213,15 @@ def get_reply(verb, parameter, context):
         assert context['status'] == 2, "STOR: Wrong status."
         assert context['mode'] == 1 or context['mode'] == 2, "STOR: Need to specify PORT or PASV first."
         assert parameter != '', "You should specify file path."
+        fpaths = parameter.split(',')
+        if len(fpaths) == 1:
+            fpaths.append(fpaths[0])
+        with open(fpaths[1], "rb") as f:
+            data = f.read()
         context['file_socket'] = socket.socket(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP)
         if context['mode'] == 1:  # PORT
             context['file_socket'].bind((context['fhost'], context['fport']))
             context['file_socket'].listen(1)  # only listen to server
-        fpaths = parameter.split(',')
-        if len(fpaths) == 1:
-            fpaths.append(fpaths[0])
         context['cmd_socket'].sendall("%s %s\r\n" % (verb, fpaths[0]))
         reply1 = recv_single_msg(context['cmd_socket'])  # context['cmd_socket'].recv(MAX_MSG_LENGTH)
         assert reply1.startswith("150 ") and reply1.endswith('\r\n'), "STOR: Wrong reply from server."
@@ -226,10 +233,8 @@ def get_reply(verb, parameter, context):
             addr = (context['fhost'], context['fport'])
         context['mode'] = 0
         print("%s: Connected to %s" % (verb, addr))
-        with open(fpaths[1], "rb") as f:
-            data = f.read()
-            conn.sendall(data)
-            conn.close()
+        conn.sendall(data)
+        conn.close()
         if context['mode'] == 1:
             context['file_socket'].close()
         context['file_socket'] = None
@@ -271,14 +276,15 @@ def gui():
 
     def setServerInfo():
         serverInfoDialog = Tk()
-        serverInfoDialog.geometry('480x50+300+300')
+        serverInfoDialog.title('Enter host and port')
+        serverInfoDialog.geometry('500x50+100+100')
         host = StringVar()
         host.set(default_server_host)
         port = StringVar()
         port.set(str(default_server_port))
-        hostEntry = Entry(serverInfoDialog, textvariable=host, width=20)
-        portEntry = Entry(serverInfoDialog, textvariable=port, width=10)
-        hostEntry.grid(row=0, column=0, padx=15, pady=10)
+        hostEntry = Entry(serverInfoDialog, textvariable=host, width=24, text="host")
+        portEntry = Entry(serverInfoDialog, textvariable=port, width=20, text="port")
+        hostEntry.grid(row=0, column=0, padx=10, pady=10)
         portEntry.grid(row=0, column=1)
 
         def submit():
@@ -324,14 +330,15 @@ def gui():
 
     def login():
         loginDialog = Tk()
-        loginDialog.geometry('480x50+300+300')
+        loginDialog.title('Login')
+        loginDialog.geometry('500x50+100+100')
         username = StringVar()
         username.set('anonymous')
         password = StringVar()
         password.set('anonymous@mails.tsinghua.edu.cn')
-        usernameEntry = Entry(loginDialog, textvariable=username, text="Username")
-        passwordEntry = Entry(loginDialog, textvariable=password, text="Password")
-        usernameEntry.grid(row=0, column=0, padx=15, pady=10)
+        usernameEntry = Entry(loginDialog, textvariable=username, width=24, text="Username")
+        passwordEntry = Entry(loginDialog, textvariable=password, width=20, text="Password")
+        usernameEntry.grid(row=0, column=0, padx=10, pady=10)
         passwordEntry.grid(row=0, column=1)
 
         def submit():
@@ -364,9 +371,10 @@ def gui():
 
     def go():
         window = Tk()
+        window.title('FTP Client')
         global context
-        window.geometry('800x500+200+100')
-        tree = ttk.Treeview(window, selectmode="extended", height=24, columns=("one", "two"))
+        window.geometry('800x600+150+100')
+        tree = ttk.Treeview(window, selectmode="extended", height=29, columns=("one", "two"))
         tree.heading("#0", text="Name")
         tree.column("#0", width=280, stretch=True)
         tree.column("one", width=280)
