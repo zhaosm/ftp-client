@@ -5,6 +5,7 @@ import ttk
 import tkMessageBox
 import tkFileDialog
 import os
+import tkSimpleDialog
 
 default_server_host = "127.0.0.1"
 default_server_port = 21
@@ -325,6 +326,7 @@ def get_reply(verb, parameter, context):
 def gui():
     # gui version
     context = {}
+    global_mode = 0
 
     def setServerInfo():
         # set host and port
@@ -378,40 +380,25 @@ def gui():
         serverInfoDialog.mainloop()
 
     def setPortInfo():
-        setPortInfoDialog = Tk()
-        setPortInfoDialog.title('Set host and port for PORT mode')
-        host = StringVar()
-        port = StringVar()
-        hostEntry = Entry(setPortInfoDialog, textvariable=host, width=20, text="Host")
-        portEntry = Entry(setPortInfoDialog, textvariable=port, width=16, text="Port")
-        hostEntry.grid(row=0, column=0, padx=10, pady=10)
-        portEntry.grid(row=0, column=1)
-
-        def submit():
-            global context
-            global my_buffer
-            host_str = ','.join(str(hostEntry.get()).split('.'))
-            port_int = int(portEntry.get())
-            p1 = port_int / 256
-            p2 = port_int % 256
-            param = host_str + ',' + str(p1) + ',' + str(p2)
-            old_context = context
-            try:
-                result, context = get_reply("PORT", param, context)
-            except Exception as e:
-                context = old_context
-                my_buffer = ""
-                tkMessageBox.showinfo("Error", e)
-                setPortInfoDialog.destroy()
-        def cancel():
-            setPortInfoDialog.destroy()
-
-        OKButton = Button(setPortInfoDialog, command=submit, text="OK")
-        OKButton.grid(row=0, column=2)
-        cancelButton = Button(setPortInfoDialog, command=cancel, text="Cancel")
-        cancelButton.grid(row=0, column=3)
-        setPortInfoDialog.mainloop()
-
+        global context
+        global my_buffer
+        hostinput = tkSimpleDialog.askstring("Enter host", "Host: ")
+        if not hostinput:
+            return
+        portinput = tkSimpleDialog.askinteger("Enter port", "Port: ")
+        if not portinput:
+            return
+        host_str = ','.join((hostinput).split('.'))
+        p1 = portinput / 256
+        p2 = portinput % 256
+        param = host_str + ',' + str(p1) + ',' + str(p2)
+        old_context = context
+        try:
+            result, context = get_reply("PORT", param, context)
+        except Exception as e:
+            context = old_context
+            my_buffer = ""
+            tkMessageBox.showinfo("Error", e)
 
     def login():
         # send username and password
@@ -435,13 +422,12 @@ def gui():
 
         def submit():
             global context
+            global my_buffer
+
             context['username'] = username.get()
             context['password'] = password.get()
-            context['mode'] = int(m.get())
             # debug
             # print("Mode: %d." % mode_value)
-
-            loginDialog.destroy()
             try:
                 results, context = get_reply("USER", context['username'], context)
                 results, context = get_reply("PASS", context['password'], context)
@@ -452,6 +438,26 @@ def gui():
                     message = e.message
                 tkMessageBox.showinfo("Error", message)
                 return
+
+            context['mode'] = 0
+            mode = int(m.get())
+            if mode == 1:
+                setPortInfo()
+            else:
+                old_context = context
+                try:
+                    result, context = get_reply("PASV", "", context)
+                except Exception as e:
+                    tkMessageBox.showinfo("Error", e)
+                    context = old_context
+                    my_buffer = ""
+                    loginDialog.destroy()
+                    login()
+                    return
+            global global_mode
+            global_mode = mode
+
+            loginDialog.destroy()
             go()
 
         def cancel():
@@ -471,16 +477,15 @@ def gui():
         window = Tk()
         window.title('FTP Client')
         global context
-        window.geometry('800x600')
-        tree = ttk.Treeview(window, selectmode="extended", height=29, columns=("one", "two"))
+        window.geometry('790x500')
+        tree = ttk.Treeview(window, selectmode="extended", columns=("one", "two"), height=25)
         tree.heading("#0", text="Name")
-        tree.column("#0", width=280, stretch=True)
-        tree.column("one", width=280)
+        tree.column("#0", width=260, stretch=True)
+        tree.column("one", width=260)
         tree.heading("one", text="Modify time")
-        tree.column("two", width=280)
+        tree.column("two", width=260)
         tree.heading("two", text="Size")
-        tree.grid(row=1, column=0, padx=8, columnspan=12)
-        tree.pack()
+        tree.grid(row=1, column=0, padx=3)
         menu_bar = Menu(window, tearoff=False)
 
         def build_dir(path):
@@ -670,19 +675,24 @@ def gui():
             # when left-clicked, clear the menu bar
             menu_bar.delete(0, END)
 
-        def set_mode(event):
+        def change_mode():
             global context
+            global my_buffer
+            global global_mode
             old_context = context
-            if context['mode'] == 2:  # try change to PORT
+            if global_mode == 2:  # try change to PORT
                 setPortInfo()
-                mode_bn.config("change to PASV")
+                global_mode = 1
+                mode_bn_text.set("change to PASV")
             else:
                 try:
                     result, context = get_reply("PASV", "", context)
-                    mode_bn.config("change to PORT")
                 except Exception as e:
                     context = old_context
+                    my_buffer = ""
                     tkMessageBox.showinfo("Error", e)
+                global_mode = 2
+                mode_bn_text.set("change to PORT")
 
         # build root dir
         tree.insert('', 'end', iid='/d', tags='d', text='/')
@@ -693,12 +703,15 @@ def gui():
         tree.bind("<Button-1>", on_left_click)
         tree.tag_configure('d', foreground='blue')
 
-        mode_bn = Button(window, command=set_mode)
-        mode_bn.grid(row=31, column=0)
-        if context['mode'] == 1:
-            mode_bn.config(text="change to PASV")
+        global global_mode
+        mode_bn_text = StringVar()
+        mode_bn = Button(window, textvariable=mode_bn_text, command=change_mode)
+        mode_bn.grid(row=26, column=0, sticky="se")
+        if global_mode == 1:
+            mode_bn_text.set("change to PASV")
         else:
-            mode_bn.config(text="change to PORT")
+            mode_bn_text.set("change to PORT")
+        # mode_bn.bind("<Button-1>", change_mode)
 
         window.mainloop()
 
