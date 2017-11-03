@@ -330,13 +330,13 @@ def gui():
         # set host and port
         serverInfoDialog = Tk()
         serverInfoDialog.title('Enter host and port')
-        serverInfoDialog.geometry('500x50+100+100')
+        serverInfoDialog.geometry('500x50')
         host = StringVar()
         host.set(default_server_host)
         port = StringVar()
         port.set(str(default_server_port))
-        hostEntry = Entry(serverInfoDialog, textvariable=host, width=24, text="host")
-        portEntry = Entry(serverInfoDialog, textvariable=port, width=20, text="port")
+        hostEntry = Entry(serverInfoDialog, textvariable=host, width=20, text="host")
+        portEntry = Entry(serverInfoDialog, textvariable=port, width=16, text="port")
         hostEntry.grid(row=0, column=0, padx=10, pady=10)
         portEntry.grid(row=0, column=1)
 
@@ -377,24 +377,70 @@ def gui():
         cancelButton.grid(row=0, column=3)
         serverInfoDialog.mainloop()
 
+    def setPortInfo():
+        setPortInfoDialog = Tk()
+        setPortInfoDialog.title('Set host and port for PORT mode')
+        host = StringVar()
+        port = StringVar()
+        hostEntry = Entry(setPortInfoDialog, textvariable=host, width=20, text="Host")
+        portEntry = Entry(setPortInfoDialog, textvariable=port, width=16, text="Port")
+        hostEntry.grid(row=0, column=0, padx=10, pady=10)
+        portEntry.grid(row=0, column=1)
+
+        def submit():
+            global context
+            global my_buffer
+            host_str = ','.join(str(hostEntry.get()).split('.'))
+            port_int = int(portEntry.get())
+            p1 = port_int / 256
+            p2 = port_int % 256
+            param = host_str + ',' + str(p1) + ',' + str(p2)
+            old_context = context
+            try:
+                result, context = get_reply("PORT", param, context)
+            except Exception as e:
+                context = old_context
+                my_buffer = ""
+                tkMessageBox.showinfo("Error", e)
+                setPortInfoDialog.destroy()
+        def cancel():
+            setPortInfoDialog.destroy()
+
+        OKButton = Button(setPortInfoDialog, command=submit, text="OK")
+        OKButton.grid(row=0, column=2)
+        cancelButton = Button(setPortInfoDialog, command=cancel, text="Cancel")
+        cancelButton.grid(row=0, column=3)
+        setPortInfoDialog.mainloop()
+
+
     def login():
         # send username and password
         loginDialog = Tk()
         loginDialog.title('Login')
-        loginDialog.geometry('500x50+100+100')
+        loginDialog.geometry('650x50')
         username = StringVar()
         username.set('anonymous')
         password = StringVar()
         password.set('anonymous@mails.tsinghua.edu.cn')
-        usernameEntry = Entry(loginDialog, textvariable=username, width=24, text="Username")
-        passwordEntry = Entry(loginDialog, textvariable=password, width=20, text="Password")
+        usernameEntry = Entry(loginDialog, textvariable=username, width=20, text="Username")
+        passwordEntry = Entry(loginDialog, textvariable=password, width=16, text="Password")
         usernameEntry.grid(row=0, column=0, padx=10, pady=10)
         passwordEntry.grid(row=0, column=1)
+        m = IntVar()
+        m.set(2)
+        rb_pasv = Radiobutton(loginDialog, text="PASV", variable=m, value=2)
+        rb_port = Radiobutton(loginDialog, text="PORT", variable=m, value=1)
+        rb_pasv.grid(row=0, column=2)
+        rb_port.grid(row=0, column=3)
 
         def submit():
             global context
             context['username'] = username.get()
             context['password'] = password.get()
+            context['mode'] = int(m.get())
+            # debug
+            # print("Mode: %d." % mode_value)
+
             loginDialog.destroy()
             try:
                 results, context = get_reply("USER", context['username'], context)
@@ -414,9 +460,9 @@ def gui():
             loginDialog.destroy()
             setServerInfo()
         OKButton = Button(loginDialog, command=submit, text="OK")
-        OKButton.grid(row=0, column=2)
+        OKButton.grid(row=0, column=4)
         cancelButton = Button(loginDialog, command=cancel, text="Cancel")
-        cancelButton.grid(row=0, column=3)
+        cancelButton.grid(row=0, column=5)
         loginDialog.mainloop()
 
     def go():
@@ -425,7 +471,7 @@ def gui():
         window = Tk()
         window.title('FTP Client')
         global context
-        window.geometry('800x600+150+100')
+        window.geometry('800x600')
         tree = ttk.Treeview(window, selectmode="extended", height=29, columns=("one", "two"))
         tree.heading("#0", text="Name")
         tree.column("#0", width=280, stretch=True)
@@ -624,6 +670,20 @@ def gui():
             # when left-clicked, clear the menu bar
             menu_bar.delete(0, END)
 
+        def set_mode(event):
+            global context
+            old_context = context
+            if context['mode'] == 2:  # try change to PORT
+                setPortInfo()
+                mode_bn.config("change to PASV")
+            else:
+                try:
+                    result, context = get_reply("PASV", "", context)
+                    mode_bn.config("change to PORT")
+                except Exception as e:
+                    context = old_context
+                    tkMessageBox.showinfo("Error", e)
+
         # build root dir
         tree.insert('', 'end', iid='/d', tags='d', text='/')
         build_dir('/')
@@ -632,6 +692,13 @@ def gui():
         tree.bind("<Button-2>", on_right_click)
         tree.bind("<Button-1>", on_left_click)
         tree.tag_configure('d', foreground='blue')
+
+        mode_bn = Button(window, command=set_mode)
+        mode_bn.grid(row=31, column=0)
+        if context['mode'] == 1:
+            mode_bn.config(text="change to PASV")
+        else:
+            mode_bn.config(text="change to PORT")
 
         window.mainloop()
 
