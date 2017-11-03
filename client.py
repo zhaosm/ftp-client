@@ -449,6 +449,8 @@ def gui():
                     data = result['content']
             data_splitted = data.split('\n')
             data_splitted = data_splitted[:len(data_splitted) - 1]
+            if data_splitted[0].startswith("total") or data_splitted[0].startswith("Total"):
+                data_splitted = data_splitted[1:]
             fnum = len(data_splitted)
             for i in range(1, fnum):
                 fdata = data_splitted[i].split()
@@ -479,7 +481,9 @@ def gui():
                     if result['type'] == 'data':
                         info = {}
                         result_splitted = result['content'].split('\n')
-                        result_splitted = result_splitted[1:len(result_splitted) - 1]
+                        if result_splitted[0].startswith("total") or result_splitted[0].startswith("Total"):
+                            result_splitted = result_splitted[1:]
+                        result_splitted = result_splitted[:len(result_splitted) - 1]
                         for line in result_splitted:
                             infos = line.split()
                             if ((type == "d" and infos[0].startswith('d')) or (type == 'f' and not infos[0].startswith('d'))) and infos[-1] == name:
@@ -607,7 +611,6 @@ def gui():
 
             # when right button clicked, clear menu bar and show a new one at the position user clicked
             menu_bar.delete(0, END)
-            menu_bar.post(event.x_root, event.y_root)
             if iid.endswith('d'):  # dir
                 menu_bar.add_command(label="Upload", command=upload)
                 menu_bar.add_command(label="Create dir", command=create)
@@ -615,6 +618,7 @@ def gui():
                 menu_bar.add_command(label="Download", command=download)
             menu_bar.add_command(label="Rename", command=rename)
             menu_bar.add_command(label="Delete", command=delete)
+            menu_bar.post(event.x_root, event.y_root)
 
         def on_left_click(event):
             # when left-clicked, clear the menu bar
@@ -625,7 +629,7 @@ def gui():
         build_dir('/')
         tree.see(default_name_prefix + 'd')
         tree.selection_set(default_name_prefix + "d")
-        tree.bind("<Button-3>", on_right_click)
+        tree.bind("<Button-2>", on_right_click)
         tree.bind("<Button-1>", on_left_click)
         tree.tag_configure('d', foreground='blue')
 
