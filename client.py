@@ -192,8 +192,7 @@ def get_reply(verb, parameter, context):
         # get success message
         reply2 = recv_single_msg(context['cmd_socket'])
         assert reply2.startswith("226 ") and reply1.endswith('\r\n'), "LIST: Wrong reply from server."
-        if context['mode'] == 1:
-            conn.close()
+        conn.close()
         # ensure context mode reset before return
         context['file_socket'].close()
         context['file_socket'] = None
@@ -241,8 +240,7 @@ def get_reply(verb, parameter, context):
         with open(fpaths[0], "wb") as f:
             f.write(data)
 
-        if context['mode'] == 1:
-            context['file_socket'].close()
+        context['file_socket'].close()
         context['file_socket'] = None
         reply2 = recv_single_msg(context['cmd_socket'])
         assert reply2.startswith("226 ") and reply2.endswith('\r\n'), "RETR: Wrong reply from server."
@@ -280,8 +278,9 @@ def get_reply(verb, parameter, context):
 
         conn.sendall(data)
         conn.close()
-        if context['mode'] == 1:
-            context['file_socket'].close()
+        # if context['mode'] == 1:
+        #     conn.close()
+        context['file_socket'].close()
         context['file_socket'] = None
 
         reply2 = recv_single_msg(context['cmd_socket'])
@@ -322,6 +321,9 @@ def get_reply(verb, parameter, context):
         reply = recv_single_msg(context['cmd_socket'])
         return [{'type': 'reply', 'content': reply}], context
 
+
+def get_port_param(hst, prt):
+    return ','.join(hst.split('.')) + ',' + str(prt / 256) + ',' + str(prt % 256)
 
 def gui():
     # gui version
@@ -388,10 +390,8 @@ def gui():
         portinput = tkSimpleDialog.askinteger("Enter port", "Port: ")
         if not portinput:
             return
-        host_str = ','.join((hostinput).split('.'))
-        p1 = portinput / 256
-        p2 = portinput % 256
-        param = host_str + ',' + str(p1) + ',' + str(p2)
+        param = get_port_param(hostinput, portinput)
+        context['port_param'] = param
         old_context = context
         try:
             result, context = get_reply("PORT", param, context)
@@ -492,47 +492,63 @@ def gui():
             # path: path from root dir, use path+type as iid
             # show all contents under path recursively
             global context
-            results, context = get_reply("PASV", "", context)
-            results, context = get_reply("LIST", path, context)
-            data = ""
-            for result in results:
-                if result['type'] == 'data':
-                    data = result['content']
-            data_splitted = data.split('\n')
-            data_splitted = data_splitted[:len(data_splitted) - 1]
-            if data_splitted[0].startswith("total") or data_splitted[0].startswith("Total"):
-                data_splitted = data_splitted[1:]
-            fnum = len(data_splitted)
-            for i in range(1, fnum):
-                fdata = data_splitted[i].split()
-                info = {'name': fdata[-1], 'time': ' '.join([fdata[-4], fdata[-3], fdata[-2]]), 'size': fdata[-5] + "B"}
-                iid = os.path.join(path, info['name'])
-                if fdata[0].startswith('d'):
-                    info['type'] = 'd'
-                    iid += info['type']
-                    tree.insert(path + 'd', 'end', iid=iid, tags=info['type'], text=info['name'], values=(info['time'], info['size']))
-                    build_dir(iid[:len(iid) - 1])
+            global global_mode
+            global my_buffer
+            old_context = context
+            try:
+                if global_mode == 1:
+                    results, context = get_reply("PORT", context['port_param'], context)
                 else:
-                    info['type'] = 'f'
-                    iid += info['type']
-                    tree.insert(path + 'd', 'end', iid=iid, tags=info['type'], text=info['name'], values=(info['time'], info['size']))
+                    results, context = get_reply("PASV", "", context)
+                results, context = get_reply("LIST", path, context)
+                data = ""
+                for result in results:
+                    if result['type'] == 'data':
+                        data = result['content']
+                data_splitted = data.split('\n')
+                data_splitted = data_splitted[:len(data_splitted) - 1]
+                if len(data_splitted) > 0 and (data_splitted[0].startswith("total") or data_splitted[0].startswith("Total")):
+                    data_splitted = data_splitted[1:]
+                fnum = len(data_splitted)
+                for i in range(0, fnum):
+                    fdata = data_splitted[i].split()
+                    info = {'name': fdata[-1], 'time': ' '.join([fdata[-4], fdata[-3], fdata[-2]]), 'size': fdata[-5] + "B"}
+                    iid = os.path.join(path, info['name'])
+                    if fdata[0].startswith('d'):
+                        info['type'] = 'd'
+                        iid += info['type']
+                        tree.insert(path + 'd', 'end', iid=iid, tags=info['type'], text=info['name'], values=(info['time'], info['size']))
+                        build_dir(iid[:len(iid) - 1])
+                    else:
+                        info['type'] = 'f'
+                        iid += info['type']
+                        tree.insert(path + 'd', 'end', iid=iid, tags=info['type'], text=info['name'], values=(info['time'], info['size']))
+            except Exception as e:
+                tkMessageBox.showinfo("Error", e)
+                context = old_context
+                my_buffer = ""
 
         def get_info(path, type):
             # get information of a dir/file specified by path and type
             global context
+            global my_buffer
+            old_context = context
             path_splitted = path.split('/')
             name = path_splitted[-1]
             parent_path = '/'.join(path_splitted[:len(path_splitted) - 1])
             if parent_path == '':
                 parent_path = '/'
             try:
-                results, context = get_reply("PASV", "", context)
+                if global_mode == 1:
+                    results, context = get_reply("PORT", context['port_param'], context)
+                else:
+                    results, context = get_reply("PASV", "", context)
                 results, context = get_reply("LIST", parent_path, context)
                 for result in results:
                     if result['type'] == 'data':
                         info = {}
                         result_splitted = result['content'].split('\n')
-                        if result_splitted[0].startswith("total") or result_splitted[0].startswith("Total"):
+                        if len(result_splitted) > 0 and (result_splitted[0].startswith("total") or result_splitted[0].startswith("Total")):
                             result_splitted = result_splitted[1:]
                         result_splitted = result_splitted[:len(result_splitted) - 1]
                         for line in result_splitted:
@@ -545,6 +561,8 @@ def gui():
                                 return info
             except Exception as e:
                 tkMessageBox.showinfo("Error", e)
+                context = old_context
+                my_buffer = ""
 
         def on_right_click(event):
             # show buttons to modify file/dir
@@ -560,30 +578,54 @@ def gui():
 
             def download():
                 global context
-                filepath = tkFileDialog.asksaveasfilename()
-                if not isinstance(filepath, str):
-                    return
-                results, context = get_reply("PASV", "", context)
-                results, context = get_reply("RETR", "%s,%s" % (filepath, iid[:len(iid) - 1]), context)
+                global global_mode
+                global my_buffer
+                old_context = context
+                try:
+                    filepath = tkFileDialog.asksaveasfilename()
+                    if not isinstance(filepath, str):
+                        return
+                    if global_mode == 1:
+                        results, context = get_reply("PORT", context['port_param'], context)
+                    else:
+                        results, context = get_reply("PASV", "", context)
+                    results, context = get_reply("RETR", "%s,%s" % (filepath, iid[:len(iid) - 1]), context)
+                except Exception as e:
+                    tkMessageBox.showinfo("Error", e)
+                    context = old_context
+                    my_buffer = ""
 
             def upload():
                 global context
-                filepath = tkFileDialog.askopenfilename()
-                if not isinstance(filepath, str):
-                    return
-                results, context = get_reply("PASV", "", context)
-                fname = filepath.split('/')[-1]
-                fpath_server = os.path.join(iid[:len(iid) - 1], fname)
-                results, context = get_reply("STOR", "%s,%s" % (fpath_server, filepath), context)
-                fiid = fpath_server + 'f'
+                global global_mode
+                global my_buffer
+                old_context = context
                 try:
-                    tree.item(fiid)
-                except:
-                    tree.insert(iid, 'end', tags=fiid[-1], iid=fiid, text=fname)
-                info = get_info(fiid[:len(fiid) - 1], fiid[-1])
-                tree.item(fiid, values=(info['time'], info['size']))
-                tree.see(fiid)
-                tree.selection_set(fiid)
+                    filepath = tkFileDialog.askopenfilename()
+                    if not isinstance(filepath, str):
+                        return
+                    if global_mode == 1:
+                        results, context = get_reply("PORT", context['port_param'], context)
+                    else:
+                        results, context = get_reply("PASV", "", context)
+                    fname = filepath.split('/')[-1]
+                    fpath_server = os.path.join(iid[:len(iid) - 1], fname)
+                    results, context = get_reply("STOR", "%s,%s" % (fpath_server, filepath), context)
+                    fiid = fpath_server + 'f'
+
+                    try:
+                        tree.item(fiid)
+                    except:
+                        tree.insert(iid, 'end', tags=fiid[-1], iid=fiid, text=fname)
+
+                    info = get_info(fiid[:len(fiid) - 1], fiid[-1])
+                    tree.item(fiid, values=(info['time'], info['size']))
+                    tree.see(fiid)
+                    tree.selection_set(fiid)
+                except Exception as e:
+                    tkMessageBox.showinfo("Error", e)
+                    context = old_context
+                    my_buffer = ""
 
             def delete():
                 if iid == "/d":
@@ -602,63 +644,40 @@ def gui():
                     return
                 parentiid = tree.parent(iid)
 
-                get_dest_name_dialog = Tk()
-                get_dest_name_dialog.geometry('480x50+300+300')
-                dest = StringVar()
-                destEntry = Entry(get_dest_name_dialog, textvariable=dest, text="New name")
-                destEntry.grid(row=0, column=0, padx=15, pady=10)
-
-                def submit():
-                    new_name = destEntry.get()
-                    get_dest_name_dialog.destroy()
-                    type = iid[-1]
-                    new_iid = os.path.join(parentiid[:len(parentiid) - 1], new_name) + type
-                    global context
-                    results, context = get_reply("RNFR", iid[:len(iid) - 1], context)
-                    results, context = get_reply("RNTO", new_iid[:len(new_iid) - 1], context)
-                    index = tree.index(iid)
-                    tree.delete(iid)
-                    tree.insert(parentiid, index, tags=new_iid[-1], iid=new_iid, text=new_name)
-                    build_dir(new_iid[:len(new_iid) - 1])
-                    tree.selection_set(new_iid)
-
-                def cancel():
-                    get_dest_name_dialog.destroy()
-
-                ok_button = Button(get_dest_name_dialog, command=submit, text="OK")
-                ok_button.grid(row=0, column=2)
-                cancel_button = Button(get_dest_name_dialog, command=cancel, text="Cancel")
-                cancel_button.grid(row=0, column=3)
-                get_dest_name_dialog.mainloop()
+                new_name = tkSimpleDialog.askstring("Enter new name", "New name: ")
+                if not new_name:
+                    return
+                type = iid[-1]
+                new_iid = os.path.join(parentiid[:len(parentiid) - 1], new_name) + type
+                global context
+                results, context = get_reply("RNFR", iid[:len(iid) - 1], context)
+                results, context = get_reply("RNTO", new_iid[:len(new_iid) - 1], context)
+                index = tree.index(iid)
+                tree.delete(iid)
+                tree.insert(parentiid, index, tags=new_iid[-1], iid=new_iid, text=new_name)
+                build_dir(new_iid[:len(new_iid) - 1])
+                tree.selection_set(new_iid)
 
             def create():
-                get_new_dir_name_dialog = Tk()
-                get_new_dir_name_dialog.geometry('480x50+300+300')
-                new_dir_name = StringVar()
-                newDirNameEntry = Entry(get_new_dir_name_dialog, textvariable=new_dir_name, text="Name")
-                newDirNameEntry.grid(row=0, column=0, padx=15, pady=10)
-
-                def submit():
-                    new_name = newDirNameEntry.get()
-                    get_new_dir_name_dialog.destroy()
-                    new_dir_path = os.path.join(iid[:len(iid) - 1], new_name)
-                    global context
-                    results, context = get_reply("MKD", new_dir_path, context)
-                    new_iid = new_dir_path + 'd'
-                    tree.insert(iid, 0, tags=new_iid[-1], iid=new_iid, text=new_name)
-                    info = get_info(new_iid[:len(new_iid) - 1], new_iid[-1])
-                    tree.item(new_iid, values=(info['time'], info['size']))
-                    tree.see(new_iid)
-                    tree.selection_set(new_iid)
-
-                def cancel():
-                    get_new_dir_name_dialog.destroy()
-
-                ok_button = Button(get_new_dir_name_dialog, command=submit, text="OK")
-                ok_button.grid(row=0, column=2)
-                cancel_button = Button(get_new_dir_name_dialog, command=cancel, text="Cancel")
-                cancel_button.grid(row=0, column=3)
-                get_new_dir_name_dialog.mainloop()
+                # get_new_dir_name_dialog = Tk()
+                # get_new_dir_name_dialog.geometry('480x50+300+300')
+                # new_dir_name = StringVar()
+                # newDirNameEntry = Entry(get_new_dir_name_dialog, textvariable=new_dir_name, text="Name")
+                # newDirNameEntry.grid(row=0, column=0, padx=15, pady=10)
+                #
+                # def submit():
+                new_name = tkSimpleDialog.askstring("Enter new dir name", "New name: ")
+                if not new_name:
+                    return
+                new_dir_path = os.path.join(iid[:len(iid) - 1], new_name)
+                global context
+                results, context = get_reply("MKD", new_dir_path, context)
+                new_iid = new_dir_path + 'd'
+                tree.insert(iid, 0, tags=new_iid[-1], iid=new_iid, text=new_name)
+                info = get_info(new_iid[:len(new_iid) - 1], new_iid[-1])
+                tree.item(new_iid, values=(info['time'], info['size']))
+                tree.see(new_iid)
+                tree.selection_set(new_iid)
 
             # when right button clicked, clear menu bar and show a new one at the position user clicked
             menu_bar.delete(0, END)
