@@ -1,3 +1,4 @@
+#coding=utf-8
 import socket
 import re
 from Tkinter import *
@@ -108,6 +109,7 @@ def command(h, p):
 def get_reply(verb, parameter, context):
     # context includes user status, transmitting mode, sockets info, etc.
     # handle user commands, return replies and new context
+    parameter = parameter.encode('utf-8')
     if verb == "USER":
         assert context['status'] == 0, "USER: Wrong status."
         context['cmd_socket'].sendall("%s %s\r\n" % (verb, parameter))
