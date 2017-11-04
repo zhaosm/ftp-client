@@ -392,13 +392,13 @@ def gui():
             return
         param = get_port_param(hostinput, portinput)
         context['port_param'] = param
-        old_context = context
-        try:
-            result, context = get_reply("PORT", param, context)
-        except Exception as e:
-            context = old_context
-            my_buffer = ""
-            tkMessageBox.showinfo("Error", e)
+        # old_context = context
+        # try:
+        #     result, context = get_reply("PORT", param, context)
+        # except Exception as e:
+        #     context = old_context
+        #     my_buffer = ""
+        #     tkMessageBox.showinfo("Error", e)
 
     def login():
         # send username and password
@@ -525,14 +525,14 @@ def gui():
             old_context = context
             try:
                 if global_mode == 1:
-                    results, context = get_reply("PORT", context['port_param'], context)
                     log_str("Sent PORT " + context['port_param'])
+                    results, context = get_reply("PORT", context['port_param'], context)
                 else:
-                    results, context = get_reply("PASV", "", context)
                     log_str("Sent PASV")
+                    results, context = get_reply("PASV", "", context)
                 log_results(results)
-                results, context = get_reply("LIST", path, context)
                 log_str("Sent LIST " + path)
+                results, context = get_reply("LIST", path, context)
                 log_results(results)
                 data = ""
                 for result in results:
@@ -566,21 +566,22 @@ def gui():
             global context
             global my_buffer
             old_context = context
-            path_splitted = path.split('/')
-            name = path_splitted[-1]
-            parent_path = '/'.join(path_splitted[:len(path_splitted) - 1])
-            if parent_path == '':
-                parent_path = '/'
             try:
+                path_splitted = path.split('/')
+                name = path_splitted[-1]
+                parent_path = '/'.join(path_splitted[:len(path_splitted) - 1])
+                if parent_path == '':
+                    parent_path = '/'
+
                 if global_mode == 1:
-                    results, context = get_reply("PORT", context['port_param'], context)
                     log_str("Sent PORT " + context['port_param'])
+                    results, context = get_reply("PORT", context['port_param'], context)
                 else:
-                    results, context = get_reply("PASV", "", context)
                     log_str("Sent PASV")
+                    results, context = get_reply("PASV", "", context)
                 log_results(results)
-                results, context = get_reply("LIST", parent_path, context)
                 log_str("Sent LIST " + parent_path)
+                results, context = get_reply("LIST", parent_path, context)
                 log_results(results)
 
                 for result in results:
@@ -606,14 +607,14 @@ def gui():
         def on_right_click(event):
             # show buttons to modify file/dir
             global context
-            iid = tree.identify_row(event.y)
-            if iid == "":  # didn't select a dir
-                return
             try:
+                iid = tree.identify_row(event.y)
+                if iid == "":  # didn't select a dir
+                    return
                 item = tree.item(iid)
+                tree.selection_set(iid)
             except:
                 return
-            tree.selection_set(iid)
 
             def download():
                 global context
@@ -625,15 +626,15 @@ def gui():
                     if not isinstance(filepath, str):
                         return
                     if global_mode == 1:
-                        results, context = get_reply("PORT", context['port_param'], context)
                         log_str("Sent PORT " + context['port_param'])
+                        results, context = get_reply("PORT", context['port_param'], context)
                     else:
-                        results, context = get_reply("PASV", "", context)
                         log_str("Sent PASV")
+                        results, context = get_reply("PASV", "", context)
                     log_results(results)
                     source = iid[:len(iid) - 1]
-                    results, context = get_reply("RETR", "%s,%s" % (filepath, source), context)
                     log_str("Sent RETR " + source)
+                    results, context = get_reply("RETR", "%s,%s" % (filepath, source), context)
                     log_results(results)
                 except Exception as e:
                     tkMessageBox.showinfo("Error", e)
@@ -650,16 +651,16 @@ def gui():
                     if not isinstance(filepath, str):
                         return
                     if global_mode == 1:
-                        results, context = get_reply("PORT", context['port_param'], context)
                         log_str("Sent PORT " + context['port_param'])
+                        results, context = get_reply("PORT", context['port_param'], context)
                     else:
-                        results, context = get_reply("PASV", "", context)
                         log_str("Sent PASV")
+                        results, context = get_reply("PASV", "", context)
                     log_results(results)
                     fname = filepath.split('/')[-1]
                     fpath_server = os.path.join(iid[:len(iid) - 1], fname)
-                    results, context = get_reply("STOR", "%s,%s" % (fpath_server, filepath), context)
                     log_str("Sent STOR " + fpath_server)
+                    results, context = get_reply("STOR", "%s,%s" % (fpath_server, filepath), context)
                     log_results(results)
                     fiid = fpath_server + 'f'
 
@@ -678,45 +679,60 @@ def gui():
                     my_buffer = ""
 
             def delete():
-                if iid == "/d":
-                    tkMessageBox.showinfo("Error", "You don't have privilege to delete the root folder.")
-                    return
                 global context
-                param = iid[:len(iid) - 1]
-                if iid.endswith('d'):
-                    results, context = get_reply("RMD", param, context)
-                    log_results("Sent RMD " + param)
-                else:
-                    results, context = get_reply("DELE", param, context)
-                    log_results("Sent DELE " + param)
-                log_results(results)
-                tree.delete(iid)
+                global my_buffer
+                old_context = context
+                try:
+                    if iid == "/d":
+                        tkMessageBox.showinfo("Error", "You don't have privilege to delete the root folder.")
+                        return
+                    param = iid[:len(iid) - 1]
+                    if iid.endswith('d'):
+                        log_str("Sent RMD " + param)
+                        results, context = get_reply("RMD", param, context)
+                    else:
+                        log_str("Sent DELE " + param)
+                        results, context = get_reply("DELE", param, context)
+                    log_results(results)
+                    tree.delete(iid)
+                except Exception as e:
+                    tkMessageBox.showinfo("Error", e)
+                    context = old_context
+                    my_buffer = ""
 
             def rename():
-                if iid == "/d":
-                    tkMessageBox.showinfo("Error", "You don't have privilege to rename the root folder.")
-                    return
-                parentiid = tree.parent(iid)
-
-                new_name = tkSimpleDialog.askstring("Enter new name", "New name: ")
-                if not new_name:
-                    return
-                type = iid[-1]
-                new_iid = os.path.join(parentiid[:len(parentiid) - 1], new_name) + type
                 global context
-                rnfr_param = iid[:len(iid) - 1]
-                rnto_param = new_iid[:len(new_iid) - 1]
-                results, context = get_reply("RNFR", rnfr_param, context)
-                log_str("Sent RNFR " + rnfr_param)
-                log_results(results)
-                results, context = get_reply("RNTO", rnto_param, context)
-                log_str("Sent RNTO " + rnto_param)
-                log_results(results)
-                index = tree.index(iid)
-                tree.delete(iid)
-                tree.insert(parentiid, index, tags=new_iid[-1], iid=new_iid, text=new_name)
-                build_dir(new_iid[:len(new_iid) - 1])
-                tree.selection_set(new_iid)
+                global my_buffer
+                old_context = context
+                try:
+                    if iid == "/d":
+                        tkMessageBox.showinfo("Error", "You don't have privilege to rename the root folder.")
+                        return
+                    parentiid = tree.parent(iid)
+
+                    new_name = tkSimpleDialog.askstring("Enter new name", "New name: ")
+                    if not new_name:
+                        return
+                    type = iid[-1]
+                    new_iid = os.path.join(parentiid[:len(parentiid) - 1], new_name) + type
+                    rnfr_param = iid[:len(iid) - 1]
+                    rnto_param = new_iid[:len(new_iid) - 1]
+                    log_str("Sent RNFR " + rnfr_param)
+                    results, context = get_reply("RNFR", rnfr_param, context)
+                    log_results(results)
+                    log_str("Sent RNTO " + rnto_param)
+                    results, context = get_reply("RNTO", rnto_param, context)
+                    log_results(results)
+                    index = tree.index(iid)
+                    tree.delete(iid)
+                    tree.insert(parentiid, index, tags=new_iid[-1], iid=new_iid, text=new_name)
+                    if type == "d":
+                        build_dir(new_iid[:len(new_iid) - 1])
+                    tree.selection_set(new_iid)
+                except Exception as e:
+                    tkMessageBox.showinfo("Error", e)
+                    context = old_context
+                    my_buffer = ""
 
             def create():
                 # get_new_dir_name_dialog = Tk()
@@ -726,20 +742,27 @@ def gui():
                 # newDirNameEntry.grid(row=0, column=0, padx=15, pady=10)
                 #
                 # def submit():
-                new_name = tkSimpleDialog.askstring("Enter new dir name", "New name: ")
-                if not new_name:
-                    return
-                new_dir_path = os.path.join(iid[:len(iid) - 1], new_name)
                 global context
-                results, context = get_reply("MKD", new_dir_path, context)
-                log_str("Sent MKD " + new_dir_path)
-                log_results(results)
-                new_iid = new_dir_path + 'd'
-                tree.insert(iid, 0, tags=new_iid[-1], iid=new_iid, text=new_name)
-                info = get_info(new_iid[:len(new_iid) - 1], new_iid[-1])
-                tree.item(new_iid, values=(info['time'], info['size']))
-                tree.see(new_iid)
-                tree.selection_set(new_iid)
+                global my_buffer
+                old_context = context
+                try:
+                    new_name = tkSimpleDialog.askstring("Enter new dir name", "New name: ")
+                    if not new_name:
+                        return
+                    new_dir_path = os.path.join(iid[:len(iid) - 1], new_name)
+                    log_str("Sent MKD " + new_dir_path)
+                    results, context = get_reply("MKD", new_dir_path, context)
+                    log_results(results)
+                    new_iid = new_dir_path + 'd'
+                    tree.insert(iid, 0, tags=new_iid[-1], iid=new_iid, text=new_name)
+                    info = get_info(new_iid[:len(new_iid) - 1], new_iid[-1])
+                    tree.item(new_iid, values=(info['time'], info['size']))
+                    tree.see(new_iid)
+                    tree.selection_set(new_iid)
+                except Exception as e:
+                    tkMessageBox.showinfo("Error", e)
+                    context = old_context
+                    my_buffer = ""
 
             # when right button clicked, clear menu bar and show a new one at the position user clicked
             menu_bar.delete(0, END)
