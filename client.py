@@ -441,19 +441,19 @@ def gui():
 
             context['mode'] = 0
             mode = int(m.get())
-            if mode == 1:
-                setPortInfo()
-            else:
-                old_context = context
-                try:
-                    result, context = get_reply("PASV", "", context)
-                except Exception as e:
-                    tkMessageBox.showinfo("Error", e)
-                    context = old_context
-                    my_buffer = ""
-                    loginDialog.destroy()
-                    login()
-                    return
+            # if mode == 1:
+            #     setPortInfo()
+            # else:
+            #     old_context = context
+            #     try:
+            #         result, context = get_reply("PASV", "", context)
+            #     except Exception as e:
+            #         tkMessageBox.showinfo("Error", e)
+            #         context = old_context
+            #         my_buffer = ""
+            #         loginDialog.destroy()
+            #         login()
+            #         return
             global global_mode
             global_mode = mode
 
@@ -478,7 +478,8 @@ def gui():
         window.title('FTP Client')
         global context
         window.geometry('790x500')
-        tree = ttk.Treeview(window, selectmode="extended", columns=("one", "two"), height=25)
+        tree = ttk.Treeview(window, selectmode="extended", columns=("one", "two"), height=17)
+        log = Text(window, width=109, height=8)
         tree.heading("#0", text="Name")
         tree.column("#0", width=260, stretch=True)
         tree.column("one", width=260)
@@ -486,7 +487,34 @@ def gui():
         tree.column("two", width=260)
         tree.heading("two", text="Size")
         tree.grid(row=1, column=0, padx=3)
+        log.grid(row=18, column=0)
+        log.config(state=DISABLED)
+
         menu_bar = Menu(window, tearoff=False)
+
+        def log_str(s):
+            while s.endswith("\n"):
+                s = s[:len(s) - 1]
+            s += "\n"
+            log.config(state=NORMAL)
+            log.insert(END, s)
+            log.config(state=DISABLED)
+
+        def log_results(results):
+            log.config(state=NORMAL)
+            logs = ""
+            for result in results:
+                info = result['content']
+                while info.endswith("\n") or info.endswith("\r"):
+                    info = info[:len(info) - 1]
+                info += "\n"
+                if result['type'] == 'reply':
+                    logs += ("Receive reply: " + info)
+                else:
+                    logs += ("Receive data: " + info)
+            log.insert(END, logs)
+            log.config(state=DISABLED)
+
 
         def build_dir(path):
             # path: path from root dir, use path+type as iid
@@ -498,9 +526,14 @@ def gui():
             try:
                 if global_mode == 1:
                     results, context = get_reply("PORT", context['port_param'], context)
+                    log_str("Sent PORT " + context['port_param'])
                 else:
                     results, context = get_reply("PASV", "", context)
+                    log_str("Sent PASV")
+                log_results(results)
                 results, context = get_reply("LIST", path, context)
+                log_str("Sent LIST " + path)
+                log_results(results)
                 data = ""
                 for result in results:
                     if result['type'] == 'data':
@@ -541,9 +574,15 @@ def gui():
             try:
                 if global_mode == 1:
                     results, context = get_reply("PORT", context['port_param'], context)
+                    log_str("Sent PORT " + context['port_param'])
                 else:
                     results, context = get_reply("PASV", "", context)
+                    log_str("Sent PASV")
+                log_results(results)
                 results, context = get_reply("LIST", parent_path, context)
+                log_str("Sent LIST " + parent_path)
+                log_results(results)
+
                 for result in results:
                     if result['type'] == 'data':
                         info = {}
@@ -587,9 +626,15 @@ def gui():
                         return
                     if global_mode == 1:
                         results, context = get_reply("PORT", context['port_param'], context)
+                        log_str("Sent PORT " + context['port_param'])
                     else:
                         results, context = get_reply("PASV", "", context)
-                    results, context = get_reply("RETR", "%s,%s" % (filepath, iid[:len(iid) - 1]), context)
+                        log_str("Sent PASV")
+                    log_results(results)
+                    source = iid[:len(iid) - 1]
+                    results, context = get_reply("RETR", "%s,%s" % (filepath, source), context)
+                    log_str("Sent RETR " + source)
+                    log_results(results)
                 except Exception as e:
                     tkMessageBox.showinfo("Error", e)
                     context = old_context
@@ -606,11 +651,16 @@ def gui():
                         return
                     if global_mode == 1:
                         results, context = get_reply("PORT", context['port_param'], context)
+                        log_str("Sent PORT " + context['port_param'])
                     else:
                         results, context = get_reply("PASV", "", context)
+                        log_str("Sent PASV")
+                    log_results(results)
                     fname = filepath.split('/')[-1]
                     fpath_server = os.path.join(iid[:len(iid) - 1], fname)
                     results, context = get_reply("STOR", "%s,%s" % (fpath_server, filepath), context)
+                    log_str("Sent STOR " + fpath_server)
+                    log_results(results)
                     fiid = fpath_server + 'f'
 
                     try:
@@ -632,10 +682,14 @@ def gui():
                     tkMessageBox.showinfo("Error", "You don't have privilege to delete the root folder.")
                     return
                 global context
+                param = iid[:len(iid) - 1]
                 if iid.endswith('d'):
-                    results, context = get_reply("RMD", iid[:len(iid) - 1], context)
+                    results, context = get_reply("RMD", param, context)
+                    log_results("Sent RMD " + param)
                 else:
-                    results, context = get_reply("DELE", iid[:len(iid) - 1], context)
+                    results, context = get_reply("DELE", param, context)
+                    log_results("Sent DELE " + param)
+                log_results(results)
                 tree.delete(iid)
 
             def rename():
@@ -650,8 +704,14 @@ def gui():
                 type = iid[-1]
                 new_iid = os.path.join(parentiid[:len(parentiid) - 1], new_name) + type
                 global context
-                results, context = get_reply("RNFR", iid[:len(iid) - 1], context)
-                results, context = get_reply("RNTO", new_iid[:len(new_iid) - 1], context)
+                rnfr_param = iid[:len(iid) - 1]
+                rnto_param = new_iid[:len(new_iid) - 1]
+                results, context = get_reply("RNFR", rnfr_param, context)
+                log_str("Sent RNFR " + rnfr_param)
+                log_results(results)
+                results, context = get_reply("RNTO", rnto_param, context)
+                log_str("Sent RNTO " + rnto_param)
+                log_results(results)
                 index = tree.index(iid)
                 tree.delete(iid)
                 tree.insert(parentiid, index, tags=new_iid[-1], iid=new_iid, text=new_name)
@@ -672,6 +732,8 @@ def gui():
                 new_dir_path = os.path.join(iid[:len(iid) - 1], new_name)
                 global context
                 results, context = get_reply("MKD", new_dir_path, context)
+                log_str("Sent MKD " + new_dir_path)
+                log_results(results)
                 new_iid = new_dir_path + 'd'
                 tree.insert(iid, 0, tags=new_iid[-1], iid=new_iid, text=new_name)
                 info = get_info(new_iid[:len(new_iid) - 1], new_iid[-1])
@@ -694,24 +756,33 @@ def gui():
             # when left-clicked, clear the menu bar
             menu_bar.delete(0, END)
 
+        f1 = Frame(window)
+        f1.grid(row=26, column=0, sticky="se")
+        set_port_info_bn = Button(f1, command=setPortInfo, text="Change PORT info")
+        # set_port_info_bn.grid(row=26, column=0, padx=50)
+        set_port_info_bn.pack(side=RIGHT)
+
         def change_mode():
             global context
             global my_buffer
             global global_mode
-            old_context = context
             if global_mode == 2:  # try change to PORT
-                setPortInfo()
+                # setPortInfo()
+                if 'port_param' not in context.keys() or not context['port_param']:
+                    setPortInfo()
                 global_mode = 1
                 mode_bn_text.set("change to PASV")
+                set_port_info_bn.config(state=NORMAL)
             else:
-                try:
-                    result, context = get_reply("PASV", "", context)
-                except Exception as e:
-                    context = old_context
-                    my_buffer = ""
-                    tkMessageBox.showinfo("Error", e)
+                # try:
+                #     result, context = get_reply("PASV", "", context)
+                # except Exception as e:
+                #     context = old_context
+                #     my_buffer = ""
+                #     tkMessageBox.showinfo("Error", e)
                 global_mode = 2
                 mode_bn_text.set("change to PORT")
+                set_port_info_bn.config(state=DISABLED)
 
         # build root dir
         tree.insert('', 'end', iid='/d', tags='d', text='/')
@@ -724,12 +795,14 @@ def gui():
 
         global global_mode
         mode_bn_text = StringVar()
-        mode_bn = Button(window, textvariable=mode_bn_text, command=change_mode)
-        mode_bn.grid(row=26, column=0, sticky="se")
+        mode_bn = Button(f1, textvariable=mode_bn_text, command=change_mode)
+        # mode_bn.grid(row=26, column=0, sticky="se")
+        mode_bn.pack(side=RIGHT)
         if global_mode == 1:
             mode_bn_text.set("change to PASV")
         else:
             mode_bn_text.set("change to PORT")
+            set_port_info_bn.config(state=DISABLED)
         # mode_bn.bind("<Button-1>", change_mode)
 
         window.mainloop()
