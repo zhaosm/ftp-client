@@ -287,10 +287,23 @@ def get_reply(verb, parameter, context):
         assert reply2.startswith("226 ") and reply2.endswith('\r\n'), "STOR: Wrong reply from server."
         context['mode'] = 0
         return [{"type": "reply", "content": reply1}, {"type": "reply", "content": reply2}], context
-    elif verb == "MKD" or verb == "CWD" or verb == "RMD" or verb == "DELE":
+    elif verb == "RMD" or verb == "DELE":
         assert context['status'] == 2, "%s: Wrong status." % (verb)
         context['cmd_socket'].sendall("%s %s\r\n" % (verb, parameter))
         reply = recv_single_msg(context['cmd_socket'])
+        assert reply.startswith("250 ") and reply.endswith("\r\n"), "%s: Error message from server: %s" % (verb, reply)
+        return [{'type': 'reply', 'content': reply}], context
+    elif verb == "MKD":
+        assert context['status'] == 2, "%s: Wrong status." % (verb)
+        context['cmd_socket'].sendall("%s %s\r\n" % (verb, parameter))
+        reply = recv_single_msg(context['cmd_socket'])
+        assert (reply.startswith("250 ") or reply.startswith("257 ")) and reply.endswith("\r\n"), "%s: Error message from server: %s" % (verb, reply)
+        return [{'type': 'reply', 'content': reply}], context
+    elif verb == "CWD":
+        assert context['status'] == 2, "%s: Wrong status." % (verb)
+        context['cmd_socket'].sendall("%s %s\r\n" % (verb, parameter))
+        reply = recv_single_msg(context['cmd_socket'])
+        assert (reply.startswith("250 ") or reply.startswith("200 ")) and reply.endswith("\r\n"), "%s: Error message from server: %s" % (verb, reply)
         return [{'type': 'reply', 'content': reply}], context
     elif verb == "RNFR":
         assert context['status'] == 2, "%s: Wrong status." % (verb)
@@ -310,15 +323,19 @@ def get_reply(verb, parameter, context):
         assert context['status'] == 2, "%s: Wrong status." % (verb)
         context['cmd_socket'].sendall("%s %s\r\n" % (verb, parameter))
         reply = recv_single_msg(context['cmd_socket'])
+        assert reply.startswith("200 ") and reply.endswith("\r\n"), "%s: Error message from server: %s" % (verb, reply)
         return [{'type': 'reply', 'content': reply}], context
     elif verb == "SYST":
         assert context['status'] == 2, "%s: Wrong status." % (verb)
         context['cmd_socket'].sendall("%s\r\n" % (verb))
         reply = recv_single_msg(context['cmd_socket'])
+        assert reply.startswith("215 ") and reply.endswith("\r\n"), "%s: Error message from server: %s" % (verb, reply)
         return [{'type': 'reply', 'content': reply}], context
     elif verb == "QUIT" or verb == "ABOR":
         context['cmd_socket'].sendall("%s\r\n" % (verb))
         reply = recv_single_msg(context['cmd_socket'])
+        if verb == "QUIT":
+            assert reply.startswith("221 ") and reply.endswith("\r\n"), "%s: Error message from server: %s" % (verb, reply)
         return [{'type': 'reply', 'content': reply}], context
 
 
