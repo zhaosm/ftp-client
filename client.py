@@ -624,7 +624,7 @@ def gui():
                                 info['type'] = type
                                 info['name'] = ' '.join(infos[8:])
                                 info['time'] = ' '.join([infos[5], infos[6], infos[7]])
-                                info['size'] = infos[4]
+                                info['size'] = infos[4] + 'B'
                                 return info
             except Exception as e:
                 tkMessageBox.showinfo("Error", e)
