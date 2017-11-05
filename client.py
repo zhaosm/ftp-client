@@ -403,6 +403,11 @@ def gui():
     def setPortInfo():
         global context
         global my_buffer
+        # if not allow_cancel:
+        #     while not hostinput or not portinput:
+        #         hostinput = tkSimpleDialog.askstring("Enter host", "Host: ")
+        #         portinput = tkSimpleDialog.askinteger("Enter port", "Port: ")
+        # else:
         hostinput = tkSimpleDialog.askstring("Enter host", "Host: ")
         if not hostinput:
             return
@@ -443,6 +448,16 @@ def gui():
             global context
             global my_buffer
 
+            context['mode'] = 0
+            mode = int(m.get())
+            if mode == 1:
+                setPortInfo()
+                if 'port_param' not in context.keys():
+                    my_buffer = ""
+                    return
+            global global_mode
+            global_mode = mode
+
             context['username'] = username.get()
             context['password'] = password.get()
             # debug
@@ -457,24 +472,6 @@ def gui():
                     message = e.message
                 tkMessageBox.showinfo("Error", message)
                 return
-
-            context['mode'] = 0
-            mode = int(m.get())
-            # if mode == 1:
-            #     setPortInfo()
-            # else:
-            #     old_context = context
-            #     try:
-            #         result, context = get_reply("PASV", "", context)
-            #     except Exception as e:
-            #         tkMessageBox.showinfo("Error", e)
-            #         context = old_context
-            #         my_buffer = ""
-            #         loginDialog.destroy()
-            #         login()
-            #         return
-            global global_mode
-            global_mode = mode
 
             loginDialog.destroy()
             go()
@@ -534,7 +531,6 @@ def gui():
             log.insert(END, logs)
             log.config(state=DISABLED)
 
-
         def build_dir(path):
             # path: path from root dir, use path+type as iid
             # show all contents under path recursively
@@ -558,13 +554,17 @@ def gui():
                     if result['type'] == 'data':
                         data = result['content']
                 data_splitted = data.split('\n')
+                if len(data_splitted) <= 1:
+                    return
                 data_splitted = data_splitted[:len(data_splitted) - 1]
                 if len(data_splitted) > 0 and (data_splitted[0].startswith("total") or data_splitted[0].startswith("Total")):
                     data_splitted = data_splitted[1:]
                 fnum = len(data_splitted)
                 for i in range(0, fnum):
                     fdata = data_splitted[i].split()
-                    info = {'name': fdata[-1], 'time': ' '.join([fdata[-4], fdata[-3], fdata[-2]]), 'size': fdata[-5] + "B"}
+                    if len(fdata) < 9:
+                        continue
+                    info = {'name': ' '.join(fdata[8:]), 'time': ' '.join([fdata[5], fdata[6], fdata[7]]), 'size': fdata[4] + "B"}
                     iid = os.path.join(path, info['name'])
                     if fdata[0].startswith('d'):
                         info['type'] = 'd'
@@ -587,7 +587,11 @@ def gui():
             old_context = context
             try:
                 path_splitted = path.split('/')
+                if len(path_splitted) < 1:
+                    return
                 name = path_splitted[-1]
+                if len(path_splitted) <= 1:
+                    return
                 parent_path = '/'.join(path_splitted[:len(path_splitted) - 1])
                 if parent_path == '':
                     parent_path = '/'
@@ -609,14 +613,18 @@ def gui():
                         result_splitted = result['content'].split('\n')
                         if len(result_splitted) > 0 and (result_splitted[0].startswith("total") or result_splitted[0].startswith("Total")):
                             result_splitted = result_splitted[1:]
+                        if len(result_splitted) <= 1:
+                            continue
                         result_splitted = result_splitted[:len(result_splitted) - 1]
                         for line in result_splitted:
                             infos = line.split()
-                            if ((type == "d" and infos[0].startswith('d')) or (type == 'f' and not infos[0].startswith('d'))) and infos[-1] == name:
+                            if len(infos) < 9:
+                                continue
+                            if ((type == "d" and infos[0].startswith('d')) or (type == 'f' and not infos[0].startswith('d'))) and ' '.join(infos[8:]) == name:
                                 info['type'] = type
-                                info['name'] = infos[-1]
-                                info['time'] = ' '.join([infos[-4], infos[-3], infos[-2]])
-                                info['size'] = infos[-5]
+                                info['name'] = ' '.join(infos[8:])
+                                info['time'] = ' '.join([infos[5], infos[6], infos[7]])
+                                info['size'] = infos[4]
                                 return info
             except Exception as e:
                 tkMessageBox.showinfo("Error", e)
@@ -812,16 +820,12 @@ def gui():
                 # setPortInfo()
                 if 'port_param' not in context.keys() or not context['port_param']:
                     setPortInfo()
+                if 'port_param' not in context.keys():  # canceled
+                    return
                 global_mode = 1
                 mode_bn_text.set("change to PASV")
                 set_port_info_bn.config(state=NORMAL)
             else:
-                # try:
-                #     result, context = get_reply("PASV", "", context)
-                # except Exception as e:
-                #     context = old_context
-                #     my_buffer = ""
-                #     tkMessageBox.showinfo("Error", e)
                 global_mode = 2
                 mode_bn_text.set("change to PORT")
                 set_port_info_bn.config(state=DISABLED)
