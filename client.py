@@ -132,7 +132,7 @@ def get_reply(verb, parameter, context):
         context['fhost'] = '.'.join(parameter_splitted[:4])
         context['fport'] = int(parameter_splitted[4]) * 256 + int(parameter_splitted[5])
         if context['file_socket']:
-            print("Closed file socket %s" % (str(context['file_socket'].getsockname())))
+            print("Closed old file socket.")
             context['file_socket'].close()
             context['file_socket'] = None
         context['mode'] = 1
@@ -276,7 +276,7 @@ def get_reply(verb, parameter, context):
         print("%s: Connected to %s" % (verb, addr))
 
         reply1 = recv_single_msg(context['cmd_socket'])
-        assert reply1.startswith("150 ") and reply1.endswith('\r\n'), "STOR: Wrong reply from server."
+        assert reply1.startswith("150 ") and reply1.endswith('\r\n'), "STOR: Wrong reply from server: %s" % reply1
 
         conn.sendall(data)
         conn.close()
@@ -286,7 +286,7 @@ def get_reply(verb, parameter, context):
         context['file_socket'] = None
 
         reply2 = recv_single_msg(context['cmd_socket'])
-        assert reply2.startswith("226 ") and reply2.endswith('\r\n'), "STOR: Wrong reply from server."
+        assert reply2.startswith("226 ") and reply2.endswith('\r\n'), "STOR: Wrong reply from server: %s" % reply2
         context['mode'] = 0
         return [{"type": "reply", "content": reply1}, {"type": "reply", "content": reply2}], context
     elif verb == "RMD" or verb == "DELE":
